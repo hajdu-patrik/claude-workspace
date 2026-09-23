@@ -2,7 +2,7 @@
 
 Claude Code munkakörnyezet: minden prompt előtt egy `UserPromptSubmit` hook (`.claude/hooks/router_hook.py`)
 megkérdezi a TypeSafe Jev-et, és a `routes.json` alapján delegálási utasítást ad
-(haiku / sonnet / opus subagent, helyben Codex / Gemini CLI). Ugyanez fut a gépen,
+(fable / sonnet / opus subagent, helyben Codex / Gemini CLI). Ugyanez fut a gépen,
 Remote Controlon (telefon → gép) és Claude Code on the weben (felhő, gép kikapcsolva).
 
 ## Fázisok
@@ -38,8 +38,17 @@ Telefon: Claude app → Code → a session zöld ponttal → prompt.
 
 ## Felülbírálás a promptban
 
-`#haiku` `#sonnet` `#opus` `#codex` `#gemini` – kényszerített cél.
+`#fable` `#sonnet` `#opus` `#codex` `#gemini` – kényszerített cél.
 `#norouter` / `#privat` – nincs routing, a prompt nem megy a TypeSafe-hez.
+
+## Modellcsalád-szabály
+
+A Claude-oldali routing mindig a `.claude/router/models.json`-ban rögzített
+szabályt követi: csak `sonnet` / `opus` / `fable` választható, mindig a család
+generikus aliasával (nem rögzített, dátumozott modell-ID-vel) – így automatikusan
+a legfrissebb verziót kapja (pl. Opusnál most 5.5, nem 5.0 vagy 4.8). A Haiku
+családot a routing sosem választja. Ugyanezt az elvet vezetjük be Codexnél és
+Gemininél is a 3. fázisban, amint a `cli-bridge` bővül.
 
 ## Hibakeresés
 

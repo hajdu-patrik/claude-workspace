@@ -47,13 +47,14 @@ DESTRUCTIVE_RE = re.compile(
     r"|utal[jd]?\b|fizess|v[áa]s[áa]rol|push\s+(-f|--force)|reset\s+--hard)",
     re.IGNORECASE,
 )
-# Kezi felulbiralas a promptban: #haiku #sonnet #opus #codex #gemini #norouter #privat
-OVERRIDES = {"#haiku": "fast", "#sonnet": "main", "#opus": "deep", "#codex": "cli:codex", "#gemini": "cli:gemini"}
+# Kezi felulbiralas a promptban: #fable #sonnet #opus #codex #gemini #norouter #privat
+# Haiku szandekosan nincs felsorolva: a Claude-oldali routing csak sonnet/opus/fable-t valaszthat.
+OVERRIDES = {"#fable": "fast", "#sonnet": "main", "#opus": "deep", "#codex": "cli:codex", "#gemini": "cli:gemini"}
 SKIP_TAGS = ("#norouter", "#privat")
 
 AGENTS = {
     "main": "Answer directly in this session; do not spawn a subagent.",
-    "fast": "Delegate the work to the `fast-worker` subagent (Haiku).",
+    "fast": "Delegate the work to the `fast-worker` subagent (Fable).",
     "test": "Delegate the work to the `test-worker` subagent (Sonnet).",
     "deep": "Delegate the work to the `deep-worker` subagent (Opus).",
     "cli:codex": "Use the `cli-bridge` skill to run this task with Codex (ChatGPT subscription).",

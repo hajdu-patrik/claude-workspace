@@ -1,0 +1,23 @@
+{
+  "_comment": "Egyetlen forras arra, mely modellcsaladok valaszthatok routing celkent, es hogyan. A 'current_reference' csak tajekoztato pillanatkep (ember/Jev szamara) - a tenyleges kivalasztas SOSEM ezt hasznalja, hanem mindig a generikus aliast (lasd policy), ami automatikusan a legujabb verziot adja.",
+  "claude": {
+    "allowed_families": ["sonnet", "opus", "fable"],
+    "excluded_families": ["haiku"],
+    "policy": "A routing/agent config mindig a csalad generikus Claude Code aliasat hasznalja (pl. \"sonnet\", \"opus\", \"fable\"), soha nem rogzitett/datumozott modell-ID-t (pl. \"claude-opus-5-5\" nem hasznalhato configban). Az alias mindig a csalad aktualisan legujabb verziojara mutat. Haiku csalad routing celkent sosem valaszthato, kezi felulbiralasban (#tag) sem.",
+    "current_reference": {
+      "sonnet": "claude-sonnet-5",
+      "opus": "claude-opus-5-5",
+      "fable": "claude-fable-5-1",
+      "haiku_excluded": "claude-haiku-4-5-20251001"
+    },
+    "last_verified": "2026-09-23"
+  },
+  "codex": {
+    "status": "later",
+    "note": "Fazis 3 (README): ha a cli-bridge Codex-integracioja elkeszul, ugyanezt az elvet kell alkalmazni - csak a legujabb elerheto modellcsalad-alias valaszthato, elavult verziok kizarva."
+  },
+  "gemini": {
+    "status": "later",
+    "note": "Fazis 3 (README): ha a cli-bridge Gemini-integracioja elkeszul, ugyanezt az elvet kell alkalmazni - csak a legujabb elerheto modellcsalad-alias valaszthato, elavult verziok kizarva."
+  }
+}
