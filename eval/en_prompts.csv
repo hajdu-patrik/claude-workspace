@@ -1,0 +1,101 @@
+id,prompt,task,difficulty,destructive
+1,What is the capital of Hungary?,qa,0,0
+2,Briefly explain the TCP three-way handshake.,qa,1,0
+3,Write a shopping list for one week for two people.,general,0,0
+4,Sort the Downloads folder into subfolders by file type.,general,1,0
+5,Solve: 3x + 7 = 22.,math,0,0
+6,Prove that there are infinitely many primes.,math,1,0
+7,"Calculate the eigenvalues of the 2x2 matrix [[2,1],[1,2]].",math,1,0
+8,Summarize my 120-page operations research notes for the exam.,study,2,0
+9,Create 10 exam questions from the linear algebra lecture.,study,1,0
+10,Fix the NullPointerException in the UserService code.,code,1,0
+11,Refactor the entire auth module to a hexagonal architecture.,code,2,0
+12,Write unit tests for the functions in parser.py with pytest.,test,1,0
+13,Run the tests and analyze the failures.,test,1,0
+14,What is the latest Python version today?,research,0,0
+15,Delete all files in the logs folder.,general,0,1
+16,Send this email to my supervisor.,general,0,1
+17,What does overfitting mean in machine learning?,qa,0,0
+18,What is 17 squared?,math,0,0
+19,How many bytes are in a kilobyte?,qa,0,0
+20,Why is the sky blue?,qa,1,0
+21,Write a polite letter to my landlord saying the heating repair is delayed.,general,0,0
+22,Plan my workout schedule for next week broken down by day.,general,1,0
+23,Make a spreadsheet of my monthly expenses by category.,general,1,0
+24,Calculate the derivative of f(x)=x^3-2x.,math,0,0
+25,Solve the following linear programming problem with the simplex method.,math,2,0
+26,What is the probability of rolling a sum of 7 with two dice?,math,1,0
+27,Prove that the square root of 2 is irrational.,math,1,0
+28,Write a summary of the third digital electronics lecture.,study,1,0
+29,Help me prepare for tomorrow's databases midterm.,study,1,0
+30,Write 20 flashcards from the computer networks course material.,study,1,0
+31,Explain Dijkstra's algorithm step by step for my exam.,study,1,0
+32,Write a Python script that converts CSV to JSON.,code,1,0
+33,Why does the API endpoint return a 500 error after login?,code,1,0
+34,Migrate the whole backend from Express to NestJS.,code,2,0
+35,Add dark mode to the React frontend.,code,1,0
+36,Review the latest commit and look for bugs.,code,1,0
+37,Optimize the SQL query that is slow on the large table.,code,2,0
+38,Write a Playwright end-to-end test for the signup flow.,test,1,0
+39,Why does pytest fail in CI but not locally?,test,1,0
+40,Increase test coverage above 80% in the utils module.,test,2,0
+41,What is today's EUR/HUF exchange rate?,research,0,0
+42,Who is currently leading the Formula 1 championship?,research,0,0
+43,What is the latest news on the enforcement of the EU AI Act?,research,1,0
+44,How much does an RTX 5090 cost right now?,research,0,0
+45,Delete the old branches from the repo.,code,0,1
+46,Send the weekly report to the team by email.,general,0,1
+47,Transfer the rent to my landlord.,general,0,1
+48,Buy the monthly pass on the transit website.,general,0,1
+49,Force push to the main branch.,code,0,1
+50,Summarize this 300-page textbook chapter by chapter.,study,2,0
+51,Who wrote The Paul Street Boys?,qa,0,0
+52,What is the difference between TCP and UDP?,qa,1,0
+53,Organize a birthday party for 15 people with a budget.,general,1,0
+54,Write a cover letter for the Bosch internship.,general,1,0
+55,Solve the equation x^2 - 5x + 6 = 0.,math,0,0
+56,Calculate the determinant of a 3x3 matrix.,math,1,0
+57,Create a list of exam topics for the operating systems course.,study,1,0
+58,Write a FastAPI endpoint for file uploads.,code,1,0
+59,Why is my React app rendering so slowly?,code,1,0
+60,Write Jest tests for the cart component.,test,1,0
+61,What is the latest Claude model?,research,0,0
+62,What will the temperature be in Budapest tomorrow?,research,0,0
+63,Delete the node_modules folder and reinstall the dependencies.,code,0,1
+64,Publish the blog post on the website.,general,0,1
+65,Translate this paragraph into Hungarian.,general,0,0
+66,What is a Docker container?,qa,0,0
+67,How does HTTPS encryption work?,qa,1,0
+68,Who was John von Neumann?,qa,0,0
+69,Explain recursion with a simple example.,qa,1,0
+70,Write a short thank-you email to my colleague.,general,0,0
+71,Create a weekly vegetarian meal plan.,general,1,0
+72,Put this list of names in alphabetical order.,general,0,0
+73,Write a LinkedIn summary for a junior developer.,general,1,0
+74,Calculate 15% VAT on 24000.,math,0,0
+75,Solve the integral of x*e^x dx.,math,1,0
+76,Prove the formula for the sum of the first n numbers by induction.,math,1,0
+77,What is the standard deviation of 2 4 4 4 5 5 7 9?,math,1,0
+78,Make study notes from the AI lecture slides.,study,1,0
+79,Help me write the literature review of my thesis.,study,2,0
+80,Quiz me on the network layers before my exam.,study,1,0
+81,Write a bash script that backs up the folder every day.,code,1,0
+82,Implement an LRU cache in Python.,code,1,0
+83,Why do I get a CORS error when calling the API from the frontend?,code,1,0
+84,Design the microservice architecture for an online shop.,code,2,0
+85,Write a regex that validates email addresses.,code,1,0
+86,Write integration tests for the database layer.,test,1,0
+87,Analyze why the login test is flaky in CI.,test,1,0
+88,Mock the external API call in the unit tests.,test,1,0
+89,What is the latest Node.js LTS version?,research,0,0
+90,What will the weather be like at Lake Balaton this weekend?,research,0,0
+91,What is the current news about the Hungarian economy?,research,1,0
+92,Delete all files older than 30 days from the Temp folder.,general,0,1
+93,Send a message to the team Slack channel about the deploy.,general,0,1
+94,Order the book from Amazon.,general,0,1
+95,Run git reset --hard in the repo.,code,0,1
+96,Uninstall the Steam program from the computer.,general,0,1
+97,Format the D: drive.,general,0,1
+98,Overwrite the production config with the new values.,code,0,1
+99,Post the event on Facebook.,general,0,1
+100,Pay the electricity bill.,general,0,1

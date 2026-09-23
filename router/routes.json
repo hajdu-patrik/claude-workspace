@@ -1,0 +1,43 @@
+{
+  "_comment": "Per provider: task + difficulty (0/1/2) -> tier. targets.json translates the tier into an agent/model/effort/text. '+verify:<tool>' adds an independent cross-check via cli-bridge (Claude only). cloud_replace applies in a cloud sandbox (ROUTER_MODE=cloud or CLAUDE_CODE_REMOTE=true), where neither Codex/Antigravity logins nor the user-level generated agents exist.",
+  "claude": {
+    "default": "main",
+    "long_context_target": "cli:antigravity",
+    "table": {
+      "qa":       ["main", "main", "deep"],
+      "general":  ["fast", "main", "deep"],
+      "math":     ["main", "deep", "deep+verify:antigravity"],
+      "study":    ["main", "main", "deep"],
+      "code":     ["main", "main", "deep+verify:codex"],
+      "test":     ["test", "test", "deep"],
+      "research": ["main", "main", "main"]
+    },
+    "cloud_replace": {"cli:antigravity": "main", "cli:codex": "main", "fast": "main", "sonnet": "main", "test": "main", "deep": "main"}
+  },
+  "codex": {
+    "default": "main",
+    "long_context_target": "deep",
+    "table": {
+      "qa":       ["fast", "main", "deep"],
+      "general":  ["fast", "main", "deep"],
+      "math":     ["main", "deep", "deep"],
+      "study":    ["main", "main", "deep"],
+      "code":     ["main", "main", "deep"],
+      "test":     ["main", "main", "deep"],
+      "research": ["main", "main", "main"]
+    }
+  },
+  "antigravity": {
+    "default": "main",
+    "long_context_target": "deep",
+    "table": {
+      "qa":       ["fast", "main", "deep"],
+      "general":  ["fast", "main", "deep"],
+      "math":     ["main", "deep", "deep"],
+      "study":    ["main", "main", "deep"],
+      "code":     ["main", "main", "deep"],
+      "test":     ["main", "main", "deep"],
+      "research": ["main", "main", "main"]
+    }
+  }
+}

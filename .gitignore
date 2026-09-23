@@ -1,5 +1,10 @@
 logs/
-eval/results.csv
+eval/results*.csv
 __pycache__/
 *.pyc
 .env
+.pytest_cache/
+
+# Legacy per-project junctions (skills/agents are user-level now: ~/.skills, ~/.claude/agents).
+/.claude/skills/
+/.claude/agents/

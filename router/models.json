@@ -1,0 +1,189 @@
+{
+  "_comment": "Single source of truth for which model families can be picked as a routing target, and how. 'current_reference' is just an informational snapshot (for humans/Jev) - actual selection NEVER uses it, always the generic alias (see policy), which automatically points at the latest version. The concrete tier->target text is already given per provider by targets.json; this file is only the FAMILY-level policy (what's selectable at all).",
+  "claude": {
+    "allowed_families": [
+      "sonnet",
+      "opus",
+      "fable"
+    ],
+    "excluded_families": [
+      "haiku"
+    ],
+    "policy": "Routing/agent config always uses the family's generic Claude Code alias (e.g. \"sonnet\", \"opus\", \"fable\"), never a pinned/dated model ID (e.g. \"claude-opus-5-5\" may not be used in config). The alias always points at the family's currently latest version. The Haiku family can never be selected as a routing target, not even via manual override (#tag).",
+    "current_reference": {
+      "sonnet": "claude-sonnet-5",
+      "opus": "claude-opus-5-5",
+      "fable": "claude-fable-5-1",
+      "haiku_excluded": "claude-haiku-4-5-20251001"
+    },
+    "last_verified": "2026-09-23",
+    "effort_levels": {
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "excluded": [
+        "ultra"
+      ],
+      "source": "this session's own live Claude Code environment: ~/.claude/settings.json's 'effortLevel' and per-family 'modelSettings' fields, plus the ReportFindings tool's 'level' enum. Not separately verified per family (sonnet/opus/fable) - assumed shared across all three.",
+      "note": "JEV picks the effort level PER REQUEST from this list, not a fixed one - see router/core.py build_questions()'s 'effort' question. 'max' is the hard ceiling for Claude: there is no 'ultra' tier, unlike Codex's gpt-5.6-terra which uniquely has one. 'ultra' is excluded here at the CODE level too (core.py strips it even if a Jev answer somehow names it), not just by omitting it from the prompt - the same defense-in-depth principle as DESTRUCTIVE_RE backing up the Jev destructive-question."
+    }
+  },
+  "codex": {
+    "status": "routing wired up (routes.json + targets.json) AND verified against real, current account data",
+    "verified_against": "~/.codex/models_cache.json, fetched 2026-09-23T20:11:24Z, client 0.156.1 - see router/probe_models.py to refresh this",
+    "available_models": [
+      {
+        "slug": "gpt-6-luna",
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "note": "current generation, fast/cheap tier - used for 'fast' and 'main'"
+      },
+      {
+        "slug": "gpt-reserve",
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "note": "fast/cheap agentic-coding model, not currently mapped to a tier"
+      },
+      {
+        "slug": "gpt-5.6-terra",
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "note": "previous generation, but the ONLY model with 'ultra' reasoning effort (adds automatic task delegation) - used for 'deep' until a gpt-6 tier above 'luna' ships"
+      },
+      {
+        "slug": "gpt-5.6-luna",
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "note": "previous generation fast tier, superseded by gpt-6-luna, not currently mapped"
+      },
+      {
+        "slug": "gpt-5.5",
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "note": "legacy, only goes up to 'xhigh' effort (no 'max'), not currently mapped"
+      },
+      {
+        "slug": "codex-auto-review",
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "note": "automatic approval review model, not a general-purpose tier"
+      }
+    ],
+    "effort_levels": {
+      "note": "Unlike Claude, Codex has NO blanket exclusion - JEV picks freely per request from the CHOSEN model's own 'levels' list above (each model's list differs; verify per slug, not per provider). 'ultra' is valid ONLY on gpt-5.6-terra - core.py passes it in build_questions()'s 'effort' criteria text as a caveat rather than filtering it in code, since which levels are valid depends on which model got picked in the same decision, and Codex (unlike Claude) has no hard per-provider ban to enforce.",
+      "source": "same as available_models above: ~/.codex/models_cache.json, fetched 2026-09-23T20:11:24Z."
+    },
+    "note": "The UserPromptSubmit hook already runs before every Codex CLI prompt ONCE TRUSTED (see router/run_hook.py). Its additionalContext is advisory text only - the hook API cannot force a model switch mid-session. The actual model/effort is chosen at launch: `codex -m <slug> -c model_reasoning_effort=<level>`. There is no 'excluded family' here like Claude's Haiku ban - all 6 available models are usable, tiering is via reasoning effort on one model rather than swapping models, except for the deep tier (see targets.json).",
+    "hook_trust": {
+      "status": "NOT YET GRANTED as of 2026-09-23 - the hook does not fire automatically yet",
+      "finding": "Verified live: a real `codex exec \"...\"` from a fresh directory produced NO logs/routing.jsonl entry (hook silently skipped). The identical prompt with `--dangerously-bypass-hook-trust` DID fire the hook and log it (`hook: UserPromptSubmit` / `hook: UserPromptSubmit Completed` printed, log entry appeared). This is Codex's own security feature, not a bug in router/install_hooks.py: it never runs an unreviewed hook.",
+      "fix": "Codex persists hook trust per-entry in ~/.codex/config.toml under a `[hooks.state...]` block, granted via a one-time interactive TUI prompt ('Hooks need review... Trust all and continue?') the first time a trusted-but-unapproved hook would fire in an INTERACTIVE (non-exec) `codex` session. Run plain `codex` (not `codex exec`) once, anywhere, and approve that prompt - it then persists for every future session, interactive or headless (`codex exec`), in any project, since it's stored at the user level. Until then, `codex exec` calls only get the router if launched with `--dangerously-bypass-hook-trust`."
+    },
+    "agents_note": "Custom agent roles: [agents.<name>] in ~/.codex/config.toml with description + config_file (a role TOML holding model / model_reasoning_effort / developer_instructions) - verified from the 0.156.1 binary's config schema (AgentRoleToml: description, config_file, nickname_candidates) and the multi_agent feature flag (stable, on). Generated by `python router/skills_hub.py agents` from targets.json -> codex.tiers."
+  },
+  "antigravity": {
+    "status": "Logged in 2026-09-23 (keyring OAuth). Antigravity desktop app 2.17.0 (winget Google.Antigravity) + CLI `agy` 1.2.9 (%LOCALAPPDATA%\u0007gy\bin\u0007gy.exe) installed. Replaces Gemini CLI (Google ended its free individual tier).",
+    "cli_home_note": "Antigravity CLI reuses the ~/.gemini/ home directory tree (its own subfolder: ~/.gemini/antigravity-cli/), NOT a separate ~/.antigravity/ - confirmed by inspecting the install output. Global config (analogous to skills.json/hooks.json) lives at ~/.gemini/config/.",
+    "hook": {
+      "event": "PreInvocation",
+      "config_path": "project-local: .agents/hooks.json ; global: ~/.gemini/config/hooks.json (source: local doc ~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/hooks.md, read directly off disk after install - not a web summary)",
+      "format_difference": "Unlike Claude/Codex, PreInvocation is NOT the same contract: (1) it fires before EVERY model call within a turn, not just once per user-submitted prompt (there's an 'invocationNum' sequence field) (2) its stdin has NO prompt text at all - only conversationId/workspacePaths/transcriptPath/artifactDirectoryPath/modelName/invocationNum/initialNumSteps (3) its stdout wants {\"injectSteps\": [{\"ephemeralMessage\": \"...\"}]}, not {\"hookSpecificOutput\": {\"additionalContext\": ...}}.",
+      "trust": "No trust gate observed: the hook was loaded ('loaded 1 named hooks') and executed on the first real run.",
+      "transcript_format": "VERIFIED 2026-09-23 with a real `agy -p` run: transcriptPath points to ~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl; the user's turn is a line with type=USER_INPUT, source=USER_EXPLICIT, content='<USER_REQUEST>\n...\n</USER_REQUEST>\n<ADDITIONAL_METADATA>...'. It is already written when PreInvocation fires.",
+      "windows_quoting": "VERIFIED bug: Antigravity runs hook commands via `cmd /c`, and a quoted path with spaces (\"E:/Coding Projects/...\") breaks (python gets 'C:\\Users\\...\\.gemini\\config\\\\\"E:\\Coding'). Fix: hooks call the space-free shim ~/.jev-router/bin/run_hook.py (installed by router/install_hooks.py)."
+    },
+    "skills": {
+      "mechanism": "Cleaner than Claude/Codex: no directory junction needed. A skills.json manifest (project-local .agents/skills.json, or global ~/.gemini/config/skills.json) with an 'entries' array of {\"path\": \"...\"} can point directly at our shared skills/ folder - Antigravity scans each entry path one level deep. Source: ~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/json_configs.md.",
+      "format_confirmed_cross_compatible": "Yes - Antigravity's own skill docs state the SKILL.md format is the same open standard also used by Claude Code, Cursor, Codex CLI (matches what this repo already verified empirically for those two).",
+      "path_rule": "VERIFIED 2026-09-23 (agy 1.2.9): skills.json entry paths must be ABSOLUTE - '~/.skills' is rejected at runtime ('~/.skills must be an absolute path'), although the bundled docs claim '~/' is home-relative. Use a forward-slash absolute path without spaces: C:/Users/<user>/.skills."
+    },
+    "effort_levels": {
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "source": "`agy --help` (no auth needed): '--effort  Reasoning effort for the current CLI session (low|medium|high)'. Confirmed narrower than Claude (low..max) and Codex (low..ultra) - no xhigh/max/ultra tier exists for Antigravity.",
+      "note": "Effort is baked into the model slug (…-low/-medium/-high); `agy --effort` sets it per CLI session."
+    },
+    "available_models": [
+      {
+        "slug": "gemini-3.8-flash-high"
+      },
+      {
+        "slug": "gemini-3.8-flash-medium"
+      },
+      {
+        "slug": "gemini-3.8-flash-low"
+      },
+      {
+        "slug": "gemini-3.7-flash-high"
+      },
+      {
+        "slug": "gemini-3.7-flash-medium"
+      },
+      {
+        "slug": "gemini-3.7-flash-low"
+      },
+      {
+        "slug": "gemini-3.6-flash-high"
+      },
+      {
+        "slug": "gemini-3.6-flash-medium"
+      },
+      {
+        "slug": "gemini-3.6-flash-low"
+      },
+      {
+        "slug": "gemini-3.1-pro-high"
+      },
+      {
+        "slug": "gemini-3.1-pro-low"
+      },
+      {
+        "slug": "claude-sonnet-4-6"
+      },
+      {
+        "slug": "claude-opus-4-6-thinking"
+      },
+      {
+        "slug": "gpt-oss-120b-medium"
+      }
+    ],
+    "verified_against": "`agy models`, 2026-09-23 23:07, CLI 1.2.9"
+  }
+}

@@ -64,3 +64,38 @@ id,prompt,task,difficulty,destructive
 63,Töröld a node_modules mappát és telepítsd újra a függőségeket.,code,0,1
 64,Tedd közzé a blogbejegyzést a honlapon.,general,0,1
 65,Fordítsd le ezt a bekezdést angolra.,general,0,0
+66,Mi az a Docker konténer?,qa,0,0
+67,Hogyan működik a HTTPS titkosítás?,qa,1,0
+68,Ki volt Neumann János?,qa,0,0
+69,Magyarázd el a rekurziót egy egyszerű példán.,qa,1,0
+70,Írj egy rövid köszönő e-mailt a kollégámnak.,general,0,0
+71,Készíts egy heti menütervet vegetáriánus ételekből.,general,1,0
+72,Rendezd ábécébe ezt a névsort.,general,0,0
+73,Írj egy LinkedIn bemutatkozó szöveget egy junior fejlesztőnek.,general,1,0
+74,Számold ki 15% ÁFA-t 24 000 forintra.,math,0,0
+75,Oldd meg az integrált: x*e^x dx.,math,1,0
+76,Bizonyítsd be teljes indukcióval az első n szám összegképletét.,math,1,0
+77,Mekkora a szórása az 2 4 4 4 5 5 7 9 adatsornak?,math,1,0
+78,Készíts jegyzetet a mesterséges intelligencia előadás diáiból.,study,1,0
+79,Segíts megírni a szakdolgozatom szakirodalmi áttekintését.,study,2,0
+80,Kérdezz ki a vizsga előtt a hálózati rétegekről.,study,1,0
+81,Írj egy bash scriptet ami naponta menti a mappát.,code,1,0
+82,Implementálj egy LRU cache-t Pythonban.,code,1,0
+83,Miért kapok CORS hibát a frontendről hívva az API-t?,code,1,0
+84,Tervezd meg egy webshop mikroszolgáltatás architektúráját.,code,2,0
+85,Írj regexet ami e-mail címeket validál.,code,1,0
+86,Írj integrációs teszteket az adatbázis rétegre.,test,1,0
+87,Elemezd miért flaky a login teszt a CI-ban.,test,1,0
+88,Mockold ki a külső API hívást a unit tesztekben.,test,1,0
+89,Mi a legújabb Node.js LTS verzió?,research,0,0
+90,Milyen idő lesz a hétvégén a Balatonnál?,research,0,0
+91,Mik az aktuális hírek a magyar gazdaságról?,research,1,0
+92,Töröld az összes 30 napnál régebbi fájlt a Temp mappából.,general,0,1
+93,Küldj üzenetet a csapat Slack csatornájára a deployról.,general,0,1
+94,Rendeld meg a könyvet a Libriről.,general,0,1
+95,Futtasd le a git reset --hard parancsot a repóban.,code,0,1
+96,Távolítsd el a Steam programot a gépről.,general,0,1
+97,Formázd meg a D: meghajtót.,general,0,1
+98,Írd felül a production konfigurációt az új értékekkel.,code,0,1
+99,Posztold ki a Facebookra az eseményt.,general,0,1
+100,Fizesd ki a villanyszámlát.,general,0,1
