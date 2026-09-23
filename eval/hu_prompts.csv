@@ -15,3 +15,52 @@ id,prompt,task,difficulty,destructive
 14,Mi a legfrissebb Python verzió ma?,research,0,0
 15,Töröld a logs mappa összes fájlját.,general,0,1
 16,Küldd el ezt az e-mailt a témavezetőmnek.,general,0,1
+17,Mit jelent az overfitting a gépi tanulásban?,qa,0,0
+18,Mennyi 17 négyzete?,math,0,0
+19,Hány bájt egy kilobájt?,qa,0,0
+20,Miért kék az ég?,qa,1,0
+21,"Írj egy udvarias levelet a főbérlőnek, hogy késik a fűtésszerelés.",general,0,0
+22,Tervezd meg a jövő heti edzéstervemet napokra bontva.,general,1,0
+23,Csinálj egy táblázatot a havi kiadásaimról kategóriánként.,general,1,0
+24,Számold ki az f(x)=x^3-2x függvény deriváltját.,math,0,0
+25,Oldd meg a következő lineáris programozási feladatot szimplex módszerrel.,math,2,0
+26,Mekkora a valószínűsége két kockadobásnál a 7-es összegnek?,math,1,0
+27,"Bizonyítsd be, hogy a gyök 2 irracionális.",math,1,0
+28,Készíts összefoglalót a digitális technika 3. előadásáról.,study,1,0
+29,Segíts felkészülni a holnapi adatbázisok ZH-ra.,study,1,0
+30,Írj 20 flashcardot a hálózatok tantárgy anyagából.,study,1,0
+31,Magyarázd el a Dijkstra-algoritmust vizsgára készülve lépésenként.,study,1,0
+32,Írj egy Python scriptet ami CSV-t JSON-ná alakít.,code,1,0
+33,Miért dob 500-as hibát az API endpoint a login után?,code,1,0
+34,Migráld az egész backendet Express-ről NestJS-re.,code,2,0
+35,Adj hozzá dark mode-ot a React frontendhez.,code,1,0
+36,Nézd át a legutóbbi commitot és keress benne bugot.,code,1,0
+37,Optimalizáld az SQL lekérdezést ami lassú a nagy táblán.,code,2,0
+38,Írj Playwright end-to-end tesztet a regisztrációs folyamatra.,test,1,0
+39,Miért bukik a CI-ban a pytest de lokálisan nem?,test,1,0
+40,Növeld a tesztlefedettséget 80% fölé a utils modulban.,test,2,0
+41,Mi a mai EUR/HUF árfolyam?,research,0,0
+42,Kik a jelenlegi Forma-1 világbajnokság éllovasai?,research,0,0
+43,Mik a legújabb hírek az EU AI Act végrehajtásáról?,research,1,0
+44,Mennyibe kerül most egy RTX 5090 Magyarországon?,research,0,0
+45,Töröld a régi branch-eket a repóból.,code,0,1
+46,Küldd el a heti riportot a csapatnak e-mailben.,general,0,1
+47,Utald át a lakbért a főbérlőnek.,general,0,1
+48,Vásárold meg a bérletet a BKK oldalán.,general,0,1
+49,Pusholj force-szal a main ágra.,code,0,1
+50,Foglald össze ezt a 300 oldalas szakkönyvet fejezetenként.,study,2,0
+51,Ki írta a Pál utcai fiúkat?,qa,0,0
+52,Mi a különbség a TCP és az UDP között?,qa,1,0
+53,Szervezz meg egy születésnapi bulit 15 főre költségvetéssel.,general,1,0
+54,Írj egy motivációs levelet a Bosch gyakornoki állásra.,general,1,0
+55,Oldd meg az x^2 - 5x + 6 = 0 egyenletet.,math,0,0
+56,Számold ki egy 3x3-as mátrix determinánsát.,math,1,0
+57,Készíts tételsort az operációs rendszerek vizsgára.,study,1,0
+58,Írj egy FastAPI végpontot fájlfeltöltéshez.,code,1,0
+59,Miért lassú a React alkalmazásom renderelése?,code,1,0
+60,Írj Jest teszteket a kosár komponenshez.,test,1,0
+61,Mi a legfrissebb Claude modell?,research,0,0
+62,Hány fok lesz holnap Budapesten?,research,0,0
+63,Töröld a node_modules mappát és telepítsd újra a függőségeket.,code,0,1
+64,Tedd közzé a blogbejegyzést a honlapon.,general,0,1
+65,Fordítsd le ezt a bekezdést angolra.,general,0,0

@@ -1,9 +1,19 @@
 # claude-workspace – Jev-router
 
 Claude Code munkakörnyezet: minden prompt előtt egy `UserPromptSubmit` hook (`.claude/hooks/router_hook.py`)
-megkérdezi a TypeSafe Jev-et, és a `routes.json` alapján delegálási utasítást ad
+besorolja a promptot, és a `routes.json` alapján delegálási utasítást ad
 (fable / sonnet / opus subagent, helyben Codex / Gemini CLI). Ugyanez fut a gépen,
 Remote Controlon (telefon → gép) és Claude Code on the weben (felhő, gép kikapcsolva).
+
+## Router backendek
+
+| Backend | Mikor | Megjegyzés |
+|---|---|---|
+| `jev` | van `TYPESAFE_API_KEY` | TypeSafe Jev; hiba/timeout esetén automatikusan `local` |
+| `local` | nincs kulcs (most) | kulcsszavas magyar/angol osztályozó, hálózat nélkül, <1 ms |
+
+Kényszerítés: `ROUTER_BACKEND=local` vagy `ROUTER_BACKEND=jev`. A logsor `backend` mezője mutatja, melyik döntött.
+Mérés: `python eval/eval_router.py` (65 címkézett magyar prompt).
 
 ## Fázisok
 
@@ -12,7 +22,8 @@ Remote Controlon (telefon → gép) és Claude Code on the weben (felhő, gép k
 | 1 | Repó + router + subagentek; telefon → gép (Remote Control); felhős út (claude.ai/code) | most |
 | 2 | Magyar diktálás (Gboard / iOS / Win+H) | 5 perc, csak beállítás |
 | 3 | Codex + Gemini CLI (`cli-bridge` skill), csak helyben | később |
-| 4 | Mérés: `eval/eval_router.py`, küszöbök és `routes.json` hangolása | legalább 50 saját prompt után |
+| 4 | Mérés: `eval/eval_router.py`, küszöbök és `routes.json` hangolása | helyi backenddel már most; Jev-kulcs után újra |
+| 5 | Jev bekapcsolása: kulcs helyben (`setup-windows.ps1` újrafuttatása) és a felhős környezetben | ha lesz hozzáférés |
 
 ## 1. fázis – gyors indítás (Windows)
 
@@ -32,8 +43,9 @@ Telefon: Claude app → Code → a session zöld ponttal → prompt.
   (+ default package manager lista).
 - Environment variables:
   ```
-  TYPESAFE_API_KEY=<külön, felhős kulcs>
   ROUTER_MODE=cloud
+  # később, Jev-hozzáféréssel:
+  # TYPESAFE_API_KEY=<külön, felhős kulcs>
   ```
 
 ## Felülbírálás a promptban

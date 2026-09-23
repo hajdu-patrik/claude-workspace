@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""A Jev-router merese magyar tesztkeszleten. Hasznalat: python eval/eval_router.py eval/hu_prompts.csv
+"""A router merese magyar tesztkeszleten. Hasznalat: python eval/eval_router.py eval/hu_prompts.csv
+Backend: ROUTER_BACKEND=local|jev (alap: jev, ha van TYPESAFE_API_KEY, kulonben local).
 CSV oszlopok: id,prompt,task,difficulty,destructive  (difficulty: 0/1/2, destructive: 0/1)
 Kimenet: pontossag, confidence-kuszob tabla, javasolt ROUTER_MIN_CONFIDENCE, es eval/results.csv."""
 import csv
 import importlib.util
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -20,10 +22,13 @@ def main(path):
     with open(path, encoding="utf-8-sig", newline="") as fh:
         rows = list(csv.DictReader(fh))
     questions = router.build_questions(router.load_json("skills.json", {}))
+    use_jev = router.BACKEND == "jev" or (router.BACKEND == "auto" and bool(os.environ.get("TYPESAFE_API_KEY")))
+    classify = (lambda p: router.ask_jev(p, questions)["answers"]) if use_jev else router.local_answers
+    print(f"Backend: {'jev' if use_jev else 'local'}")
     out = []
     for r in rows:
         try:
-            a = router.ask_jev(r["prompt"], questions)["answers"]
+            a = classify(r["prompt"])
         except Exception as exc:  # egy hibas sor ne allitsa le a merest
             print(f"  HIBA a(z) {r['id']}. sornal: {type(exc).__name__}: {exc}")
             continue
@@ -57,7 +62,7 @@ def main(path):
     print(f"\nNehezseg: pontos {exact:.0%}, +-1 szinten belul {near:.0%}")
 
     pos = [o for o in out if o["destr_true"]]
-    flagged = [o for o in out if o["destr_p"] >= router.DESTRUCTIVE_T or router.DESTRUCTIVE_RE.search(o["prompt"])]
+    flagged = [o for o in out if o["destr_p"] >= router.DESTRUCTIVE_T or router.is_destructive(o["prompt"])]
     if pos:
         recall = sum(1 for o in pos if o in flagged) / len(pos)
         print(f"Destruktiv (Jev + regex): felismeres {recall:.0%} ({len(pos)} pozitivbol), riasztas osszesen {len(flagged)}")

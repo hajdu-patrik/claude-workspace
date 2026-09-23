@@ -8,9 +8,11 @@
     2. Figyelmeztet a Remote Controlt tilto kornyezeti valtozokra.
     3. TYPESAFE_API_KEY -> felhasznaloi kornyezeti valtozo (ha meg nincs).
     4. CLAUDE_CODE_SHELL -> Git Bash a %USERPROFILE%\.claude\settings.json env blokkjaba (mentes .bak-ba).
-    5. -KeepAwake: halozati tapon alvas/hibernalas ki.
+    5. -KeepAwake: halozati tapon alvas/hibernalas ki, fedel lecsukasa = nincs teendo.
     6. -AutoStart: "ClaudeRemoteControl" utemezett feladat bejelentkezeskor (start-rc.cmd).
-    7. Fustteszt: a router hook egy magyar prompttal.
+    7. Codex / Gemini CLI jelenletenek ellenorzese (csak tajekoztat).
+    8. Modellcsalad-szabaly ellenorzese (scripts/check_models.py).
+    9. Fustteszt: a router hook egy magyar prompttal (Jev-kulcs nelkul a helyi backenddel).
 #>
 param([switch]$KeepAwake, [switch]$AutoStart)
 $ErrorActionPreference = 'Stop'
@@ -54,13 +56,13 @@ if ($found) { Warn ("Remote Controlt tiltja: " + ($found -join ', ') + " -> toro
 if ([Environment]::GetEnvironmentVariable('TYPESAFE_API_KEY', 'User')) {
   Ok "TYPESAFE_API_KEY mar be van allitva (User)"
 } else {
-  $sec = Read-Host "TypeSafe API-kulcs (Enter = kihagyas)" -AsSecureString
+  $sec = Read-Host "TypeSafe API-kulcs (Enter = kihagyas, amig nincs Jev-hozzaferes)" -AsSecureString
   $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
   if ($plain) {
     [Environment]::SetEnvironmentVariable('TYPESAFE_API_KEY', $plain, 'User')
     $env:TYPESAFE_API_KEY = $plain
     Ok "TYPESAFE_API_KEY elmentve (User). Uj terminal kell, hogy a claude is lassa."
-  } else { Warn "Kulcs nelkul a router 'unavailable' fallbacken fut (nem blokkol)." }
+  } else { Ok "Kulcs nelkul a helyi (kulcsszavas) router fut; a Jev a kulcs megadasakor automatikusan atveszi." }
 }
 
 # 4. CLAUDE_CODE_SHELL a felhasznaloi Claude-beallitasokba
@@ -86,7 +88,9 @@ if ($GitBash) {
 if ($KeepAwake) {
   powercfg /change standby-timeout-ac 0
   powercfg /change hibernate-timeout-ac 0
-  Ok "Alvas/hibernalas kikapcsolva halozati tapon"
+  powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
+  powercfg /setactive SCHEME_CURRENT
+  Ok "Halozati tapon: nincs alvas/hibernalas, a fedel lecsukasa nem altat"
 }
 
 # 6. Automatikus inditas
@@ -101,13 +105,25 @@ if ($AutoStart) {
   } catch { Warn "Utemezett feladat nem jott letre ($($_.Exception.Message)). Futtasd admin PowerShellben." }
 }
 
-# 7. Fustteszt
+# 7. Codex / Gemini (3. fazis)
+foreach ($t in 'codex', 'gemini') {
+  if (Get-Command $t -ErrorAction SilentlyContinue) { Ok "$t CLI megvan" } else { Warn "$t CLI nincs telepitve (3. fazis, opcionalis)" }
+}
+
+# 8. Modellcsalad-szabaly (.claude/router/models.json)
+& $py scripts/check_models.py
+if ($LASTEXITCODE -eq 0) { Ok "Modellcsalad-szabaly rendben" } else { Bad "Modellcsalad-szabalysertes (lasd fent)" }
+
+# 9. Fustteszt
 $out = '{"prompt":"Refaktorald az auth modult"}' | & $py .claude/hooks/router_hook.py
 Write-Host "Hook kimenet: $out"
 $logf = Join-Path $Repo 'logs\routing.jsonl'
 if (Test-Path $logf) { Write-Host ("Utolso logsor: " + (Get-Content $logf -Tail 1 -Encoding UTF8)) }
-if ("$out" -match 'task=code') { Ok "Jev-hivas sikeres" }
-elseif ("$out" -match 'unavailable') { Warn "Router fallback: nezd a logsor 'error' mezojet (uj terminalban futtasd ujra, ha most allitottad a kulcsot)" }
+if ("$out" -match 'backend=jev') { Ok "Router mukodik, Jev backenddel" }
+elseif ("$out" -match 'backend=local') {
+  if ($env:TYPESAFE_API_KEY) { Warn "Van kulcs, de a Jev-hivas nem sikerult -> helyi backend. Ok: a logsor 'error' mezoje." }
+  else { Ok "Router mukodik, helyi backenddel (Jev-kulcs nelkul)" }
+}
 else { Bad "Varatlan hook-kimenet" }
 
 Write-Host ""

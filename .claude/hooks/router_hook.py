@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Claude Code UserPromptSubmit hook: Jev-alapu router. Csak standard konyvtar.
+"""Claude Code UserPromptSubmit hook: Jev-alapu router, helyi kulcsszavas tartalekkal. Csak standard konyvtar.
+
+Backend: ha van TYPESAFE_API_KEY, a Jev dont; ha nincs, vagy a Jev-hivas elbukik, a helyi osztalyozo.
 
 Bemenet: a hook JSON-ja stdin-en ({"prompt": ...}).
 Kimenet: JSON additionalContext-tel. Mindig exit 0: a router sosem blokkolja a promptot.
@@ -10,6 +12,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -42,11 +45,24 @@ DIFFICULTY = [
     "Hard: needs deep multi-step reasoning or large changes",
 ]
 # Kodszintu biztonsagi halo a Jev mellett (a Jev prompt injectionnel befolyasolhato).
+# Ekezet nelkuli, kisbetus szovegen fut (is_destructive normalizal), igy "Töröld" es "torold" is talal.
 DESTRUCTIVE_RE = re.compile(
-    r"(t[öo]r[öo]l|delete|rm\s+-rf|drop\s+table|k[üu]ldd?\s+el|send\s+(an?\s+)?(e-?mail|message)"
-    r"|utal[jd]?\b|fizess|v[áa]s[áa]rol|push\s+(-f|--force)|reset\s+--hard)",
-    re.IGNORECASE,
+    r"(torol|delete|\brm\s+-|drop\s+(table|database)|truncate|kuldd?\s+el|elkuld|send\s+(an?\s+)?(e-?mail|message)"
+    r"|\butal|fizess|fizesd|vasarol|rendeld\s+meg|\border\b|publikal|kozze|publish|posztold|tweeteld"
+    r"|push\w*\s+(-f\b|--force)|force[- ]?push|push\w*\s+force|force-?szal|reset\s+--hard|felulir|overwrite"
+    r"|\bformat\w*\s+(a\s+)?(lemez|disk|meghajto|drive)|uninstall|eltavolit)"
 )
+
+
+def _norm(text):
+    t = unicodedata.normalize("NFKD", text.lower())
+    return "".join(c for c in t if not unicodedata.combining(c))
+
+
+def is_destructive(prompt):
+    return bool(DESTRUCTIVE_RE.search(_norm(prompt)))
+
+
 # Kezi felulbiralas a promptban: #fable #sonnet #opus #codex #gemini #norouter #privat
 # Haiku szandekosan nincs felsorolva: a Claude-oldali routing csak sonnet/opus/fable-t valaszthat.
 OVERRIDES = {"#fable": "fast", "#sonnet": "main", "#opus": "deep", "#codex": "cli:codex", "#gemini": "cli:gemini"}
@@ -64,6 +80,58 @@ VERIFY = {
     "codex": "Then get an independent review of the result via the `cli-bridge` skill (codex).",
     "gemini": "Then have Gemini solve it independently via the `cli-bridge` skill (gemini) and compare; report any disagreement.",
 }
+
+
+# --- Helyi (kulcs nelkuli) backend -------------------------------------------------------------
+# Kulcsszo-alapu osztalyozo magyar + angol promptokra. A Jev-valasszal azonos alaku "answers"-t ad,
+# igy a decide() valtozatlan. ROUTER_BACKEND: auto (alap: Jev ha van kulcs, kulonben local) | jev | local.
+BACKEND = os.environ.get("ROUTER_BACKEND", "auto").lower()
+
+LOCAL_TASK_RE = {  # ekezet nelkuli, kisbetus szovegen fut
+    "test": r"\bteszt|pytest|unit ?test|unittest|\bjest\b|vitest|playwright|coverage|lefedettseg|\btests?\b",
+    "code": r"\bkod|refaktor|refactor|\bbug|fuggveny|osztaly|\bmodul|\bapi\b|endpoint|python|javascript|typescript|"
+            r"react|next\.?js|\bjava\b|c#|\bsql\b|script|exception|stack ?trace|\bgit\b|commit|\bmerge\b|deploy|"
+            r"docker|\.py\b|\.js\b|\.ts\b|implementa|debug|compile|backend|frontend|\brepo|push|branch|pull request|vegpont|fastapi|django|flask|node_modules|fuggoseg|npm\b|\bpip\b",
+    "math": r"oldd meg|egyenlet|bizonyits|integral|deriv|matrix|sajatertek|valoszinuseg|szamold ki|hatarertek|"
+            r"\bprim|lemma|\bproof|equation|negyzete|gyoke|szazalek|\d\s*[a-z]\s*[-+*/=]|=\s*\d|\d\s*[-+*/^]\s*\d",
+    "study": r"jegyzet|eloadas|vizsga|\bzh\b|kollokvium|tantargy|szakdolgozat|diplomamunka|\btetel|egyetem|felev|"
+             r"kurzus|foglald ossze|osszefoglal|konspektus|flashcard",
+    "research": r"legfrissebb|legujabb|aktualis|\bma\b|\bmai\b|jelenleg|hirek|\bnews\b|latest|current|arfolyam|"
+                r"mennyibe kerul|holnap|idojaras|hany fok|\bara\b|ki (a|az) (jelenlegi )?\w+ (elnoke|vezerigazgatoja|miniszterelnoke)",
+    "qa": r"^(mi|mik|ki|kik|mikor|hol|miert|hogyan|hany|melyik|mennyi|what|who|when|where|why|how)\b|magyarazd|"
+          r"mit jelent|mi az a|\bexplain",
+    "general": r"\birj\b|keszits|tervezd|szervezd|rendezd|\blista|e-?mail|\blevel|mappa|fajl|jegyzokonyv",
+}
+LOCAL_PRIORITY = ["test", "math", "code", "study", "research", "qa", "general"]  # dontetlennel ez a sorrend
+LOCAL_HARD_RE = r"\begesz\b|\bteljes\b|architektur|nehez|bonyolult|reszletes|mikroszolgaltatas|migral|optimaliz|" \
+                r"hexagonal|\d{2,}\s*oldal|tobb (fajl|modul)"
+LOCAL_LONG_RE = r"\d{2,}\s*oldal|(egesz|teljes|osszes) (kodbazis|repo|projekt|konyv|fajl)"
+
+
+def local_answers(prompt):
+    """Jev-kompatibilis valasz kulcsszavak alapjan. Determinisztikus, halozat nelkul, <1 ms."""
+    t = _norm(prompt)
+    scores = {k: len(re.findall(p, t)) for k, p in LOCAL_TASK_RE.items()}
+    ranked = sorted(LOCAL_PRIORITY, key=lambda k: (-scores[k], LOCAL_PRIORITY.index(k)))
+    top, second = ranked[0], ranked[1]
+    if scores[top] == 0:
+        task, conf = "general", 0.3
+    else:
+        task, conf = top, min(0.9, 0.5 + 0.15 * (scores[top] - scores[second]))
+    hard = bool(re.search(LOCAL_HARD_RE, t))
+    if hard:
+        level = 2
+    elif len(t) < 50 and task in ("qa", "general", "research", "math") and not re.search(r"bizonyits|proof", t):
+        level = 0
+    else:
+        level = 1
+    return {
+        "task": {"choice": task, "confidence": conf},
+        "difficulty": {"score": level, "confidence": 0.7},
+        "long_context": {"noul": 0.8 if re.search(LOCAL_LONG_RE, t) else 0.1},
+        "needs_web": {"noul": 0.8 if task == "research" else 0.1},
+        "destructive": {"noul": 0.9 if is_destructive(prompt) else 0.05},
+    }
 
 
 def load_json(name, default):
@@ -172,7 +240,7 @@ def decide(answers, routes, skills):
 
 
 def render(d, destructive_hit):
-    parts = [f"[router] task={d['task']} difficulty={d['level']} conf={d['task_conf']}."]
+    parts = [f"[router] backend={d.get('backend', 'override')} task={d['task']} difficulty={d['level']} conf={d['task_conf']}."]
     parts.append(AGENTS.get(d["primary"], AGENTS["main"]))
     if d.get("verify") in VERIFY:
         parts.append(VERIFY[d["verify"]])
@@ -208,7 +276,7 @@ def main():
     if len(prompt) < 3 or prompt.startswith("/") or any(t in prompt.lower() for t in SKIP_TAGS):
         return 0  # nincs routing: parancs, ures vagy privat prompt (nem megy a TypeSafe-hez)
 
-    regex_hit = bool(DESTRUCTIVE_RE.search(prompt))
+    regex_hit = is_destructive(prompt)
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
              "prompt": prompt[:500], "cloud": CLOUD}
 
@@ -226,17 +294,28 @@ def main():
     routes = load_json("routes.json", {"default": "main", "table": {}})
     skills = load_json("skills.json", {})
     t0 = time.perf_counter()
-    try:
-        result = ask_jev(prompt, build_questions(skills))
-        d = decide(result["answers"], routes, skills)
-        d["jev_model"] = result.get("model")
-    except Exception as exc:  # halozat, timeout, 429, rossz valasz: soha ne blokkoljunk
-        entry.update({"error": f"{type(exc).__name__}: {exc}"[:200], "latency_ms": int((time.perf_counter() - t0) * 1000)})
-        log(entry)
-        emit("[router] unavailable; answer directly in this session."
-             + (" SAFETY: ask for explicit confirmation before any irreversible action." if regex_hit else "")
-             + " Respond in Hungarian.")
-        return 0
+    use_jev = BACKEND == "jev" or (BACKEND == "auto" and bool(os.environ.get("TYPESAFE_API_KEY")))
+    d = None
+    if use_jev:
+        try:
+            result = ask_jev(prompt, build_questions(skills))
+            d = decide(result["answers"], routes, skills)
+            d["jev_model"] = result.get("model")
+            d["backend"] = "jev"
+        except Exception as exc:  # halozat, timeout, 429, rossz valasz: helyi backendre esunk vissza
+            entry["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    if d is None:
+        try:
+            d = decide(local_answers(prompt), routes, {})
+            d["backend"] = "local"
+        except Exception as exc:  # pl. hibas routes.json: soha ne blokkoljunk
+            entry.update({"error": f"{type(exc).__name__}: {exc}"[:200],
+                          "latency_ms": int((time.perf_counter() - t0) * 1000)})
+            log(entry)
+            emit("[router] unavailable; answer directly in this session."
+                 + (" SAFETY: ask for explicit confirmation before any irreversible action." if regex_hit else "")
+                 + " Respond in Hungarian.")
+            return 0
 
     entry.update(d)
     entry["latency_ms"] = int((time.perf_counter() - t0) * 1000)
