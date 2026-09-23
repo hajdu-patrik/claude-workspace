@@ -92,9 +92,9 @@ LOCAL_TASK_RE = {  # ekezet nelkuli, kisbetus szovegen fut
     "code": r"\bkod|refaktor|refactor|\bbug|fuggveny|osztaly|\bmodul|\bapi\b|endpoint|python|javascript|typescript|"
             r"react|next\.?js|\bjava\b|c#|\bsql\b|script|exception|stack ?trace|\bgit\b|commit|\bmerge\b|deploy|"
             r"docker|\.py\b|\.js\b|\.ts\b|implementa|debug|compile|backend|frontend|\brepo|push|branch|pull request|vegpont|fastapi|django|flask|node_modules|fuggoseg|npm\b|\bpip\b",
-    "math": r"oldd meg|egyenlet|bizonyits|integral|deriv|matrix|sajatertek|valoszinuseg|szamold ki|hatarertek|"
+    "math": r"\bmatek|matematik|oldd meg|egyenlet|bizonyits|integral|deriv|matrix|sajatertek|valoszinuseg|szamold ki|hatarertek|"
             r"\bprim|lemma|\bproof|equation|negyzete|gyoke|szazalek|\d\s*[a-z]\s*[-+*/=]|=\s*\d|\d\s*[-+*/^]\s*\d",
-    "study": r"jegyzet|eloadas|vizsga|\bzh\b|kollokvium|tantargy|szakdolgozat|diplomamunka|\btetel|egyetem|felev|"
+    "study": r"egyetemi|jegyzet|eloadas|vizsga|\bzh\b|kollokvium|tantargy|szakdolgozat|diplomamunka|\btetel|egyetem|felev|"
              r"kurzus|foglald ossze|osszefoglal|konspektus|flashcard",
     "research": r"legfrissebb|legujabb|aktualis|\bma\b|\bmai\b|jelenleg|hirek|\bnews\b|latest|current|arfolyam|"
                 r"mennyibe kerul|holnap|idojaras|hany fok|\bara\b|ki (a|az) (jelenlegi )?\w+ (elnoke|vezerigazgatoja|miniszterelnoke)",
