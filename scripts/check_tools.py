@@ -40,7 +40,7 @@ def main():
                         ("Codex login", ["codex", "login", "status"]), ("Antigravity CLI", [AGY, "--version"]),
                         ("Python", [sys.executable, "--version"]), ("Git", ["git", "--version"])]:
         exe = shutil.which(argv[0]) or (argv[0] if Path(argv[0]).is_file() else None)
-        line(bool(exe), label, run(argv) if exe else "not found")
+        line(bool(exe), label, run([exe] + argv[1:]) if exe else "not found")  # resolved path: npm .cmd shims
     apps = run(["powershell", "-NoProfile", "-Command",
                 "(Get-AppxPackage | ? { $_.Name -match '^(Claude|OpenAI.Codex)$' } | % { $_.Name + ' ' + $_.Version }) -join '; '"])
     line("Claude" in apps, "Desktop apps (MSIX)", apps)
