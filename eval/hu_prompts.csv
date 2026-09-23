@@ -1,0 +1,17 @@
+id,prompt,task,difficulty,destructive
+1,Mi Magyarország fővárosa?,qa,0,0
+2,Magyarázd el röviden a TCP háromutas kézfogását.,qa,1,0
+3,Írj egy bevásárlólistát egy hétre két főre.,general,0,0
+4,Rendezd a Letöltések mappát típus szerint almappákba.,general,1,0
+5,Oldd meg: 3x + 7 = 22.,math,0,0
+6,"Bizonyítsd be, hogy végtelen sok prímszám van.",math,1,0
+7,"Számold ki a 2x2-es mátrix sajátértékeit: [[2,1],[1,2]].",math,1,0
+8,Foglald össze a 120 oldalas operációkutatás jegyzetemet vizsgára.,study,2,0
+9,Készíts 10 vizsgakérdést a lineáris algebra előadásból.,study,1,0
+10,Javítsd ki a kód NullPointerException hibáját a UserService-ben.,code,1,0
+11,Refaktoráld az egész auth modult hexagonális architektúrára.,code,2,0
+12,Írj unit teszteket a parser.py függvényeire pytesttel.,test,1,0
+13,"Futtasd a teszteket, és elemezd a bukásokat.",test,1,0
+14,Mi a legfrissebb Python verzió ma?,research,0,0
+15,Töröld a logs mappa összes fájlját.,general,0,1
+16,Küldd el ezt az e-mailt a témavezetőmnek.,general,0,1
