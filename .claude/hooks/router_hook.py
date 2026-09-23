@@ -269,9 +269,12 @@ def emit(text):
 
 
 def main():
-    try:
-        prompt = (json.loads(sys.stdin.buffer.read().decode("utf-8")).get("prompt") or "").strip()
-    except (ValueError, UnicodeDecodeError, AttributeError):  # Windows: stdin-t mindig UTF-8-kent olvassuk
+    raw = sys.stdin.buffer.read()
+    try:  # utf-8-sig: a PowerShell 5.1 BOM-ot tehet a pipe-olt szoveg ele
+        prompt = (json.loads(raw.decode("utf-8-sig")).get("prompt") or "").strip()
+    except (ValueError, UnicodeDecodeError, AttributeError) as exc:  # sosem blokkolunk, de naplozzuk
+        log({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "error": f"stdin: {type(exc).__name__}: {exc}"[:200],
+             "stdin_head": raw[:80].decode("utf-8", "replace")})
         return 0
     if len(prompt) < 3 or prompt.startswith("/") or any(t in prompt.lower() for t in SKIP_TAGS):
         return 0  # nincs routing: parancs, ures vagy privat prompt (nem megy a TypeSafe-hez)

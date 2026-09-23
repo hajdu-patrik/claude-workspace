@@ -32,7 +32,7 @@ def main():
     if not exe:
         print(f"cli-bridge: a '{cmd[0]}' parancs nincs a PATH-on.", file=sys.stderr)
         return 2
-    prompt = sys.stdin.buffer.read().decode("utf-8", errors="replace").strip()
+    prompt = sys.stdin.buffer.read().decode("utf-8-sig", errors="replace").strip()
     if not prompt:
         print("cli-bridge: ures prompt.", file=sys.stderr)
         return 2

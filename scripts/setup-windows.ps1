@@ -18,7 +18,7 @@ param([switch]$KeepAwake, [switch]$AutoStart)
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 Set-Location $Repo
-$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
+$OutputEncoding = [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false  # BOM nelkul (PS 5.1)
 
 function Ok($m)   { Write-Host "[OK]   $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "[!]    $m" -ForegroundColor Yellow }
