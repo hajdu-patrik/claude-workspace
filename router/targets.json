@@ -4,62 +4,180 @@
     "agent_template": "{model}-worker-{effort}",
     "tiers": {
       "main": "Answer directly in this session; do not spawn a subagent.",
-      "fast": {"model": "fable", "efforts": ["low", "medium", "high"], "agent": "{model}-worker-{effort}",
-               "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."},
-      "sonnet": {"model": "sonnet", "efforts": ["medium", "high", "xhigh"], "agent": "{model}-worker-{effort}",
-                 "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."},
-      "test": {"model": "sonnet", "efforts": ["medium", "high", "xhigh"], "agent": "test-worker-{effort}",
-               "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."},
-      "deep": {"model": "opus", "efforts": ["high", "xhigh", "max"], "agent": "{model}-worker-{effort}",
-               "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."},
-      "cli:codex": {"model": "gpt-6-astra", "efforts": ["high", "xhigh", "max"],
-                    "text": "Use the `cli-bridge` skill to run this task with Codex (`--model {model} --effort {effort}`)."},
-      "cli:antigravity": {"model": "gemini-3.1-pro", "efforts": ["low", "high"], "slug": "{id}-{effort}",
-                          "text": "Use the `cli-bridge` skill to run this task with Antigravity (`--model {slug}`)."}
+      "fast": {
+        "model": "fable",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "agent": "{model}-worker-{effort}",
+        "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."
+      },
+      "sonnet": {
+        "model": "sonnet",
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "agent": "{model}-worker-{effort}",
+        "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."
+      },
+      "test": {
+        "model": "sonnet",
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "agent": "test-worker-{effort}",
+        "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."
+      },
+      "deep": {
+        "model": "opus",
+        "efforts": [
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "agent": "{model}-worker-{effort}",
+        "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."
+      },
+      "cli:codex": {
+        "model": "gpt-5.6-terra",
+        "efforts": [
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "text": "Use the `cli-bridge` skill to run this task with Codex (`--model {model} --effort {effort}`)."
+      },
+      "cli:antigravity": {
+        "model": "gemini-3.1-pro",
+        "efforts": [
+          "low",
+          "high"
+        ],
+        "slug": "{id}-{effort}",
+        "text": "Use the `cli-bridge` skill to run this task with Antigravity (`--model {slug}`)."
+      }
     },
-    "model_pick": {"agent": "{model}-worker-{effort}",
-                   "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."},
-    "model_pick_tiers": ["main", "fast", "sonnet", "deep"],
+    "model_pick": {
+      "agent": "{model}-worker-{effort}",
+      "text": "Delegate the work to the `{agent}` subagent ({model}, effort {effort})."
+    },
+    "model_pick_tiers": [
+      "main",
+      "fast",
+      "sonnet",
+      "deep"
+    ],
     "verify": {
-      "codex": "Then get an independent review of the result via the `cli-bridge` skill (codex, `--model gpt-6-astra --effort high`).",
+      "codex": "Then get an independent review of the result via the `cli-bridge` skill (codex, `--model gpt-5.6-terra --effort high`).",
       "antigravity": "Then have Antigravity solve it independently via the `cli-bridge` skill (antigravity, `--model gemini-3.1-pro-high`) and compare; report any disagreement."
     },
-    "overrides": {"#fable": "fast", "#sonnet": "sonnet", "#opus": "deep", "#codex": "cli:codex", "#antigravity": "cli:antigravity"}
+    "overrides": {
+      "#fable": "fast",
+      "#sonnet": "sonnet",
+      "#opus": "deep",
+      "#codex": "cli:codex",
+      "#antigravity": "cli:antigravity"
+    }
   },
   "codex": {
     "agent_template": "{model_}-{effort}",
     "tiers": {
-      "main": {"model": "gpt-6-sol", "efforts": ["medium", "high"], "agent": "{model_}-{effort}",
-               "same_model_text": "Answer directly in this session ({model} is the right model), reasoning effort {effort}.",
-               "text": "Spawn a subagent with agent_type `{agent}` ({model}, reasoning effort {effort}) to do this work, then report its result."},
-      "fast": {"model": "gpt-6-luna", "efforts": ["low", "medium"], "agent": "{model_}-{effort}",
-               "same_model_text": "Trivial request: answer directly and briefly in this session, reasoning effort {effort}.",
-               "text": "Trivial request: answer directly and briefly (a cheaper fit would be {model}, effort {effort}; not worth a subagent)."},
-      "deep": {"model": "gpt-6-astra", "efforts": ["high", "xhigh", "max"], "agent": "{model_}-{effort}",
-               "same_model_text": "Hard request: stay in this session ({model} is the right model), reasoning effort {effort}; plan first, then verify.",
-               "text": "Spawn a subagent with agent_type `{agent}` ({model}, reasoning effort {effort}) to do this work, then report its result."}
+      "main": {
+        "model": "gpt-6-luna",
+        "efforts": [
+          "medium",
+          "high"
+        ],
+        "agent": "{model_}-{effort}",
+        "same_model_text": "Answer directly in this session ({model} is the right model), reasoning effort {effort}.",
+        "text": "Spawn a subagent with agent_type `{agent}` ({model}, reasoning effort {effort}) to do this work, then report its result."
+      },
+      "fast": {
+        "model": "gpt-6-luna",
+        "efforts": [
+          "low",
+          "medium"
+        ],
+        "agent": "{model_}-{effort}",
+        "same_model_text": "Trivial request: answer directly and briefly in this session, reasoning effort {effort}.",
+        "text": "Trivial request: answer directly and briefly (a cheaper fit would be {model}, effort {effort}; not worth a subagent)."
+      },
+      "deep": {
+        "model": "gpt-5.6-terra",
+        "efforts": [
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "agent": "{model_}-{effort}",
+        "same_model_text": "Hard request: stay in this session ({model} is the right model), reasoning effort {effort}; plan first, then verify.",
+        "text": "Spawn a subagent with agent_type `{agent}` ({model}, reasoning effort {effort}) to do this work, then report its result."
+      }
     },
-    "model_pick": {"agent": "{model_}-{effort}",
-                   "same_model_text": "Answer directly in this session ({model} is the right model), reasoning effort {effort}.",
-                   "text": "Spawn a subagent with agent_type `{agent}` ({model}, reasoning effort {effort}) to do this work, then report its result."},
-    "model_pick_tiers": ["main", "fast", "deep"],
+    "model_pick": {
+      "agent": "{model_}-{effort}",
+      "same_model_text": "Answer directly in this session ({model} is the right model), reasoning effort {effort}.",
+      "text": "Spawn a subagent with agent_type `{agent}` ({model}, reasoning effort {effort}) to do this work, then report its result."
+    },
+    "model_pick_tiers": [
+      "main",
+      "fast",
+      "deep"
+    ],
     "verify": {},
-    "overrides": {"#fast": "fast", "#main": "main", "#deep": "deep"}
+    "overrides": {
+      "#fast": "fast",
+      "#main": "main",
+      "#deep": "deep"
+    }
   },
   "antigravity": {
     "_comment": "Antigravity has no fixed-model agent mechanism, so tiers are advice; the effort is part of the model slug. cli-bridge (`agy --model <slug>`) is where another tool enforces an Antigravity model.",
     "tiers": {
-      "main": {"model": "gemini-3.8-flash", "efforts": ["medium", "high"],
-               "text": "Answer directly. Best-fit model: `{slug}`."},
-      "fast": {"model": "gemini-3.8-flash", "efforts": ["low", "medium"],
-               "text": "Trivial request: answer directly and briefly. Best-fit model: `{slug}`."},
-      "deep": {"model": "gemini-3.1-pro", "efforts": ["high"],
-               "text": "Hard request: plan first, then work step by step and verify. Best-fit model: `{slug}` (alternative: claude-opus-4-6-thinking); if the current model is weaker, tell the user to switch with /model."}
+      "main": {
+        "model": "gemini-3.8-flash",
+        "efforts": [
+          "medium",
+          "high"
+        ],
+        "text": "Answer directly. Best-fit model: `{slug}`."
+      },
+      "fast": {
+        "model": "gemini-3.8-flash",
+        "efforts": [
+          "low",
+          "medium"
+        ],
+        "text": "Trivial request: answer directly and briefly. Best-fit model: `{slug}`."
+      },
+      "deep": {
+        "model": "gemini-3.1-pro",
+        "efforts": [
+          "high"
+        ],
+        "text": "Hard request: plan first, then work step by step and verify. Best-fit model: `{slug}` (alternative: claude-opus-4-6-thinking); if the current model is weaker, tell the user to switch with /model."
+      }
     },
-    "model_pick": {"text": "Best-fit model: `{slug}`; if the current model differs, tell the user to switch with /model."},
-    "model_pick_tiers": ["main", "fast", "deep"],
+    "model_pick": {
+      "text": "Best-fit model: `{slug}`; if the current model differs, tell the user to switch with /model."
+    },
+    "model_pick_tiers": [
+      "main",
+      "fast",
+      "deep"
+    ],
     "verify": {},
-    "overrides": {"#fast": "fast", "#main": "main", "#deep": "deep"}
+    "overrides": {
+      "#fast": "fast",
+      "#main": "main",
+      "#deep": "deep"
+    }
   },
   "claude-chat": {
     "_comment": "Claude desktop Chat/Cowork via the MCP route_prompt tool: no hooks, no subagents, the model cannot switch itself - advice only.",
@@ -68,14 +186,37 @@
       "fast": "Simple request: answer directly and concisely.",
       "sonnet": "Answer directly (Sonnet is a good fit).",
       "test": "Testing task: back every claim with actual run output where tools allow.",
-      "deep": {"model": "opus", "efforts": ["high", "xhigh", "max"],
-               "text": "Hard request: plan first, reason step by step and verify before answering. If the current model is not {model}, suggest the user switch to {model} with extended thinking."},
+      "deep": {
+        "model": "opus",
+        "efforts": [
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "text": "Hard request: plan first, reason step by step and verify before answering. If the current model is not {model}, suggest the user switch to {model} with extended thinking."
+      },
       "cli:codex": "If a Codex/ChatGPT second opinion would help, say so; otherwise answer directly.",
       "cli:antigravity": "Long-context request: work through the material section by section."
     },
-    "model_pick": {"text": "Best-fit model: {model} (effort {effort}); if the current model differs, suggest the user switch in the model menu."},
-    "model_pick_tiers": ["main", "fast", "sonnet", "deep"],
-    "verify": {"codex": "Double-check the result critically before presenting it.", "antigravity": "Double-check the result critically before presenting it."},
-    "overrides": {"#fable": "fast", "#sonnet": "sonnet", "#opus": "deep", "#codex": "cli:codex", "#antigravity": "cli:antigravity"}
+    "model_pick": {
+      "text": "Best-fit model: {model} (effort {effort}); if the current model differs, suggest the user switch in the model menu."
+    },
+    "model_pick_tiers": [
+      "main",
+      "fast",
+      "sonnet",
+      "deep"
+    ],
+    "verify": {
+      "codex": "Double-check the result critically before presenting it.",
+      "antigravity": "Double-check the result critically before presenting it."
+    },
+    "overrides": {
+      "#fable": "fast",
+      "#sonnet": "sonnet",
+      "#opus": "deep",
+      "#codex": "cli:codex",
+      "#antigravity": "cli:antigravity"
+    }
   }
 }

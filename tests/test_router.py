@@ -118,10 +118,10 @@ def test_route_claude_hard_code_goes_to_deep_worker_with_verify():
 
 def test_route_codex_effort_always_valid_for_model():
     d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex")
-    assert d["primary"] == "deep" and "`gpt-6-astra-" in text
+    assert d["primary"] == "deep" and "`gpt-5_6-terra-" in text
     assert d["effort"] in ("high", "xhigh", "max")
     assert "Respond in English." in text
-    d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex", session_model="gpt-6-astra")
+    d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex", session_model="gpt-5.6-terra")
     assert "stay in this session" in text and "Spawn" not in text
 
 
@@ -134,10 +134,10 @@ def test_ultra_is_never_offered_or_accepted(monkeypatch):
         assert "ultra" not in json.dumps(q.get("model", {}))
     fake = {"answers": {"task": {"choice": "code", "confidence": 0.95}, "difficulty": {"score": 2, "confidence": 0.9},
                         "long_context": {"noul": 0.1}, "needs_web": {"noul": 0.1}, "destructive": {"noul": 0.05},
-                        "effort": {"choice": "ultra", "confidence": 0.9}, "model": {"choice": "gpt-6-astra", "confidence": 0.9}}}
+                        "effort": {"choice": "ultra", "confidence": 0.9}, "model": {"choice": "gpt-5.6-terra", "confidence": 0.9}}}
     monkeypatch.setattr(core, "ask_jev", lambda p, q: json.loads(json.dumps(fake)))
     d, text, _, _ = core.route("anything", "codex", backend="jev")
-    assert d["effort"] == "max" and "`gpt-6-astra-max`" in text and "ultra" not in text
+    assert d["effort"] == "max" and "`gpt-5_6-terra-max`" in text and "ultra" not in text
 
 
 def test_jev_model_pick_every_provider(monkeypatch):
@@ -148,9 +148,9 @@ def test_jev_model_pick_every_provider(monkeypatch):
     monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("sonnet", "low"))
     _, text, _, _ = core.route("Write a haiku", "claude", backend="jev")
     assert "`sonnet-worker-low`" in text
-    monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gpt-5.5", "max"))  # 5.5 tops out at xhigh
+    monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gpt-6-sol", "high"))  # rejected for ChatGPT accounts
     d, text, _, _ = core.route("Write a haiku", "codex", backend="jev")
-    assert "`gpt-5_5-xhigh`" in text and d["effort"] == "xhigh"
+    assert d.get("model") is None and "gpt-6-sol" not in text
     monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gemini-3.1-pro", "medium"))  # pro has low/high only
     _, text, _, _ = core.route("Write a haiku", "antigravity", backend="jev")
     assert "`gemini-3.1-pro-high`" in text

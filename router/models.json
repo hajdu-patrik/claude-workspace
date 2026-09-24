@@ -1,49 +1,218 @@
 {
   "_comment": "Single source of truth: every model and reasoning-effort level the router (JEV, or the local mock) may choose, per provider - all verified live on 2026-09-24. 'models' with selectable=true are offered to JEV as the 'model' question; each model's 'levels' are what it really supports. policy.excluded_efforts is removed from EVERY provider in code (core.py), never offered to JEV and stripped from any answer. Agents/roles that enforce a (model, effort) pair are generated from this file by `python router/skills_hub.py agents --apply`.",
   "policy": {
-    "excluded_efforts": ["ultra"],
+    "excluded_efforts": [
+      "ultra"
+    ],
     "note": "'ultra' (Codex: 'maximum reasoning with automatic task delegation', i.e. ultra/auto-delegation mode) is never selectable - not by JEV, not by the local mock, not via override. Stripped in core.py regardless of what an answer says."
   },
   "claude": {
-    "allowed_families": ["sonnet", "opus", "fable"],
-    "excluded_families": ["haiku"],
+    "allowed_families": [
+      "sonnet",
+      "opus",
+      "fable"
+    ],
+    "excluded_families": [
+      "haiku"
+    ],
     "policy": "Always the family's generic Claude Code alias (sonnet/opus/fable), never a pinned/dated model ID; the alias always points at the family's latest version. Haiku can never be selected, not even via an override tag.",
-    "current_reference": {"sonnet": "claude-sonnet-5", "opus": "claude-opus-5-5", "fable": "claude-fable-5-1", "haiku_excluded": "claude-haiku-4-5-20251001"},
+    "current_reference": {
+      "sonnet": "claude-sonnet-5",
+      "opus": "claude-opus-5-5",
+      "fable": "claude-fable-5-1",
+      "haiku_excluded": "claude-haiku-4-5-20251001"
+    },
     "verified": "2026-09-24: `claude --help` (--effort low|medium|high|xhigh|max; --model aliases fable/opus/sonnet) + live `claude -p --model <fable|sonnet|opus> --effort <low|max>` runs, all OK. Claude Code 2.1.281.",
     "models": [
-      {"id": "fable", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max"],
-       "description": "Claude Fable - fastest and cheapest Claude family; simple, well-scoped tasks, formatting, short answers"},
-      {"id": "sonnet", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max"],
-       "description": "Claude Sonnet - balanced Claude family; everyday coding, writing, analysis, tests"},
-      {"id": "opus", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max"],
-       "description": "Claude Opus - strongest Claude family; hard reasoning, proofs, architecture, large refactors"}
+      {
+        "id": "fable",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "Claude Fable - fastest and cheapest Claude family; simple, well-scoped tasks, formatting, short answers"
+      },
+      {
+        "id": "sonnet",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "Claude Sonnet - balanced Claude family; everyday coding, writing, analysis, tests"
+      },
+      {
+        "id": "opus",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "Claude Opus - strongest Claude family; hard reasoning, proofs, architecture, large refactors"
+      }
     ]
   },
   "codex": {
-    "verified": "2026-09-24: `codex debug models` (live catalog, CLI 0.156.1). NOTE: ~/.codex/models_cache.json was stale (written by the ChatGPT app's bundled 0.155.0 client) and missed gpt-6-astra / gpt-6-sol / gpt-5.6-sol - always refresh from `codex debug models` (router/probe_models.py).",
+    "verified": "2026-09-24, LIVE per model with this ChatGPT account (`codex exec -m <model>`): WORKS gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, gpt-reserve. REJECTED: gpt-6-astra, gpt-6-sol, gpt-5.6-sol ('not supported when using Codex with a ChatGPT account'), gpt-5.5 (404 no access). `codex debug models` shows the binary's full catalog, not what the account can use - never trust it alone.",
     "models": [
-      {"id": "gpt-6-astra", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
-       "description": "GPT-6-Astra - frontier intelligence for the most demanding work"},
-      {"id": "gpt-6-sol", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
-       "description": "GPT-6-Sol - workhorse model for coding and everyday work (Codex default)"},
-      {"id": "gpt-6-luna", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max"],
-       "description": "GPT-6-Luna - fast and affordable model for easier tasks"},
-      {"id": "gpt-5.6-sol", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
-       "description": "GPT-5.6-Sol - older coding model for complex work"},
-      {"id": "gpt-5.6-terra", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
-       "description": "GPT-5.6-Terra - older balanced model for straightforward work"},
-      {"id": "gpt-5.6-luna", "selectable": true, "levels": ["low", "medium", "high", "xhigh", "max"],
-       "description": "GPT-5.6-Luna - older fast and efficient model"},
-      {"id": "gpt-5.5", "selectable": true, "levels": ["low", "medium", "high", "xhigh"],
-       "description": "GPT-5.5 - legacy coding model"},
-      {"id": "gpt-5.4", "selectable": false, "levels": ["low", "medium", "high", "xhigh"],
-       "description": "hidden in the catalog (visibility=hide)"},
-      {"id": "gpt-daybreak-blue-latest", "selectable": false, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
-       "description": "hidden; defensive-cybersecurity specialist - not a general routing target"},
-      {"id": "gpt-daybreak-red-latest", "selectable": false, "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
-       "description": "hidden; cyber-permissive variant for authorized security research only - never routed to automatically"},
-      {"id": "codex-auto-review", "selectable": false, "levels": ["low", "medium", "high", "xhigh", "max"],
-       "description": "hidden; Codex's automatic approval-review model, not a general-purpose model"}
+      {
+        "id": "gpt-6-astra",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "description": "GPT-6-Astra - not supported with a ChatGPT account (verified)"
+      },
+      {
+        "id": "gpt-6-sol",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "description": "GPT-6-Sol - not supported with a ChatGPT account (verified)"
+      },
+      {
+        "id": "gpt-6-luna",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "GPT-6-Luna - fast and affordable model for easier tasks"
+      },
+      {
+        "id": "gpt-reserve",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "GPT-Reserve - fast and affordable agentic coding model (hidden in the picker, but works with this account)"
+      },
+      {
+        "id": "gpt-5.6-sol",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "description": "GPT-5.6-Sol - not supported with a ChatGPT account (verified)"
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "description": "GPT-5.6-Terra - older balanced model for straightforward work"
+      },
+      {
+        "id": "gpt-5.6-luna",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "GPT-5.6-Luna - older fast and efficient model"
+      },
+      {
+        "id": "gpt-5.5",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "description": "GPT-5.5 - 404 - no access for this account (verified)"
+      },
+      {
+        "id": "gpt-5.4",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "description": "hidden in the catalog (visibility=hide)"
+      },
+      {
+        "id": "gpt-daybreak-blue-latest",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "description": "hidden; defensive-cybersecurity specialist - not a general routing target"
+      },
+      {
+        "id": "gpt-daybreak-red-latest",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "description": "hidden; cyber-permissive variant for authorized security research only - never routed to automatically"
+      },
+      {
+        "id": "codex-auto-review",
+        "selectable": false,
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "description": "hidden; Codex's automatic approval-review model, not a general-purpose model"
+      }
     ],
     "role_name_rule": "Codex agent roles are named <model>-<effort> with '.' replaced by '_' (TOML-safe), e.g. gpt-5_6-sol-high.",
     "hook_trust": "Codex runs a new/changed hook only after it is trusted once: run `codex` (interactive) -> /hooks -> trust. Until then `codex exec` skips it silently (verified 2026-09-23).",
@@ -52,20 +221,72 @@
   "antigravity": {
     "verified": "2026-09-24: `agy models` (CLI 1.2.9, logged in). The effort is part of the model slug (…-low/-medium/-high); models without a suffix have a single fixed setting.",
     "models": [
-      {"id": "gemini-3.8-flash", "selectable": true, "levels": ["low", "medium", "high"], "slug": "{id}-{effort}",
-       "description": "Gemini 3.8 Flash - newest fast Gemini; everyday tasks"},
-      {"id": "gemini-3.7-flash", "selectable": true, "levels": ["low", "medium", "high"], "slug": "{id}-{effort}",
-       "description": "Gemini 3.7 Flash - previous fast Gemini"},
-      {"id": "gemini-3.6-flash", "selectable": true, "levels": ["low", "medium", "high"], "slug": "{id}-{effort}",
-       "description": "Gemini 3.6 Flash - older fast Gemini"},
-      {"id": "gemini-3.1-pro", "selectable": true, "levels": ["low", "high"], "slug": "{id}-{effort}",
-       "description": "Gemini 3.1 Pro - strongest Gemini; hard reasoning, long context"},
-      {"id": "claude-sonnet-4-6", "selectable": true, "levels": [], "slug": "{id}",
-       "description": "Claude Sonnet 4.6 (Thinking) inside Antigravity"},
-      {"id": "claude-opus-4-6-thinking", "selectable": true, "levels": [], "slug": "{id}",
-       "description": "Claude Opus 4.6 (Thinking) inside Antigravity - strongest non-Gemini option"},
-      {"id": "gpt-oss-120b", "selectable": true, "levels": ["medium"], "slug": "{id}-{effort}",
-       "description": "GPT-OSS 120B (Medium) - open-weight model"}
+      {
+        "id": "gemini-3.8-flash",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "slug": "{id}-{effort}",
+        "description": "Gemini 3.8 Flash - newest fast Gemini; everyday tasks"
+      },
+      {
+        "id": "gemini-3.7-flash",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "slug": "{id}-{effort}",
+        "description": "Gemini 3.7 Flash - previous fast Gemini"
+      },
+      {
+        "id": "gemini-3.6-flash",
+        "selectable": true,
+        "levels": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "slug": "{id}-{effort}",
+        "description": "Gemini 3.6 Flash - older fast Gemini"
+      },
+      {
+        "id": "gemini-3.1-pro",
+        "selectable": true,
+        "levels": [
+          "low",
+          "high"
+        ],
+        "slug": "{id}-{effort}",
+        "description": "Gemini 3.1 Pro - strongest Gemini; hard reasoning, long context"
+      },
+      {
+        "id": "claude-sonnet-4-6",
+        "selectable": true,
+        "levels": [],
+        "slug": "{id}",
+        "description": "Claude Sonnet 4.6 (Thinking) inside Antigravity"
+      },
+      {
+        "id": "claude-opus-4-6-thinking",
+        "selectable": true,
+        "levels": [],
+        "slug": "{id}",
+        "description": "Claude Opus 4.6 (Thinking) inside Antigravity - strongest non-Gemini option"
+      },
+      {
+        "id": "gpt-oss-120b",
+        "selectable": true,
+        "levels": [
+          "medium"
+        ],
+        "slug": "{id}-{effort}",
+        "description": "GPT-OSS 120B (Medium) - open-weight model"
+      }
     ],
     "cli_home_note": "Antigravity CLI uses ~/.gemini/ (its own subfolder ~/.gemini/antigravity-cli/); global config in ~/.gemini/config/.",
     "hook": {

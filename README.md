@@ -31,7 +31,7 @@ code change (JEV errors/timeouts fall back to the mock automatically).
 | Surface | Mechanism | Status (verified 2026-09-23) |
 |---|---|---|
 | Claude Code CLI + desktop **Code** tab (+ Remote Control from the phone) | `UserPromptSubmit` hook, `~/.claude/settings.json` | ✅ live; delegates to `<fable|sonnet|opus>-worker-<effort>` / `test-worker-<effort>` |
-| Codex CLI + ChatGPT app **Codex** mode | `UserPromptSubmit` hook, `~/.codex/hooks.json` | ✅ live, **after** you trust it once (`codex` → `/hooks`); 34 roles `<model>-<effort>`, stays in-session when the session already runs the chosen model |
+| Codex CLI + ChatGPT app **Codex** mode | `UserPromptSubmit` hook, `~/.codex/hooks.json` | ✅ live, **after** you trust it once (`codex` → `/hooks`); 20 roles `<model>-<effort>`, stays in-session when the session already runs the chosen model |
 | Antigravity CLI + app | `PreInvocation` hook, `~/.gemini/config/hooks.json` (prompt read from the transcript, injected once per turn) | ✅ live |
 | Claude desktop **Chat / Cowork** | MCP tool `route_prompt` (no hooks exist there) | ✅ server registered; the model calls it because of the Personal-preferences line below |
 | Codex / Antigravity (extra) | same MCP server | ✅ registered |
@@ -102,12 +102,12 @@ never offered to JEV, stripped from any answer in code, and no agent/role exists
 | Provider | Selectable models (JEV's `model` question) | Effort levels | Enforcement |
 |---|---|---|---|
 | Claude | fable, sonnet, opus (generic aliases; never haiku) | low, medium, high, xhigh, max | 15 agents `<model>-worker-<effort>` + `test-worker-<medium/high/xhigh>` |
-| Codex | gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5 (hidden: gpt-5.4, daybreak-*, codex-auto-review – not selectable) | low…max per model (gpt-5.5 up to xhigh) | 34 roles `<model>-<effort>` (dots → `_`) in `~/.codex/config.toml` |
+| Codex | gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, gpt-reserve (verified per model with this ChatGPT account; gpt-6-astra, gpt-6-sol, gpt-5.6-sol, gpt-5.5 are rejected for ChatGPT accounts) | low…max | 20 roles `<model>-<effort>` (dots → `_`) in `~/.codex/config.toml` |
 | Antigravity | gemini-3.8/3.7/3.6-flash (low/medium/high), gemini-3.1-pro (low/high), claude-sonnet-4-6, claude-opus-4-6-thinking, gpt-oss-120b (medium) | baked into the slug | advisory (no fixed-model agents in agy); cli-bridge `agy --model <slug>` |
 
 Tier defaults (used by the mock, or when JEV doesn't pick a model): Claude `fast`=fable, `sonnet`,
-`test`=sonnet, `deep`=opus, `main`=in-session; Codex `fast`=gpt-6-luna, `main`=gpt-6-sol,
-`deep`=gpt-6-astra; Antigravity `fast`/`main`=gemini-3.8-flash, `deep`=gemini-3.1-pro-high.
+`test`=sonnet, `deep`=opus, `main`=in-session; Codex `fast`=gpt-6-luna, `main`=gpt-6-luna,
+`deep`=gpt-5.6-terra; Antigravity `fast`/`main`=gemini-3.8-flash, `deep`=gemini-3.1-pro-high.
 The effort is always clamped to what the chosen model really supports.
 Policy check: `python scripts/check_models.py`.
 

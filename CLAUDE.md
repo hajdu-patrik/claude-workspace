@@ -39,7 +39,7 @@ exists) decides model (from every selectable model) + reasoning effort (never `u
 All skills live in the shared hub `~/.skills` and are usable cross-tool. Details: README.md.
 
 Status (2026-09-24): done and live-tested - hooks for all 3 tools, all models/efforts verified live (models.json), generated
-worker agents (Claude 18, Codex 34 roles),
+worker agents (Claude 18, Codex 20 roles),
 skill hub (149 skills, 187 in catalog), MCP router, cli-bridge, 68 unit tests, eval 100 hu + 100 en
 (PASS), Handy installed for Hungarian dictation, phone access for Claude + Antigravity.
 Open (user's manual steps): trust the Codex hook (`codex` -> /hooks); restart the Claude app and
