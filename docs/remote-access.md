@@ -5,12 +5,17 @@ feature. The router, skills and agents work exactly as when you type locally, be
 runs on your computer.
 
 ```bash
-python install.py remote --name "My Workstation"   # name defaults to the computer's hostname
-python install.py remote --remove                  # undo
+python install.py remote --name "My Workstation"                  # name defaults to the hostname
+python install.py remote --name "My Workstation" --workdir ~/code  # folder remote sessions start in
+python install.py remote --remove                                 # undo
 ```
 
-The name is stored in `~/.jev-router/config.json` and shown on your other devices. Use the same
-name for every tool so you always recognize the machine.
+The name and folder are stored in `~/.jev-router/config.json`; the name is shown on your other
+devices. Use the same name for every tool so you always recognize the machine.
+
+**Working folder:** remote Claude sessions start in `--workdir` (default: the jev-router folder).
+Claude Code only serves folders whose workspace-trust dialog was accepted, and never the home
+directory: run `claude` once in that folder and accept the dialog before setting up remote access.
 
 ## What gets set up
 

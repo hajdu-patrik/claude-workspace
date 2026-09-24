@@ -20,7 +20,8 @@ dates are ISO 8601.
 - **OS abstraction** (`router/platforms.py`): junctions on Windows, symlinks on macOS/Linux; config
   locations per OS; executable discovery; login detection.
 - **Optional remote-access module** (`router/remote.py`, `docs/remote-access.md`) with a
-  user-chosen machine name (default: hostname) stored in `~/.jev-router/config.json`.
+  user-chosen machine name (default: hostname) and working folder (`--workdir`, must be a folder
+  Claude Code trusts – never the home directory), stored in `~/.jev-router/config.json`.
 - JEV token in `~/.jev-router/config.json` (environment variable still wins).
 - Per-account model availability: `python install.py models --probe` writes
   `~/.jev-router/models.local.json`, which overrides the catalog's defaults.
@@ -32,6 +33,10 @@ dates are ISO 8601.
 - All documentation rewritten in English and made generic; no personal or machine data.
 - Skill migration covers every tool's personal skill folder, not only Claude's.
 - Hooks call the absolute Python interpreter (unless its path contains spaces).
+
+### Fixed
+- Codex `config.toml`: removing the MCP section no longer swallows the comment line that starts the
+  generated agents block (which led to duplicate `[agents.*]` tables); the section is replaced in place.
 
 ### Removed
 - Windows-only `scripts/setup-windows.ps1` and `start-rc.cmd` (replaced by `install.py`).

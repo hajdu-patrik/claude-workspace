@@ -54,7 +54,7 @@ Preview without changing anything: `python install.py --dry-run`.
 | --- | --- |
 | `python install.py detect` | report installed / logged-in tools |
 | `python install.py models --probe` | test which models your accounts may use (stored per user) |
-| `python install.py remote --name "My PC"` | remote access from other devices ([guide](docs/remote-access.md)) |
+| `python install.py remote --name "My PC" [--workdir <folder>]` | remote access from other devices ([guide](docs/remote-access.md)) |
 | `python install.py uninstall` | remove hooks, MCP entries and remote access (skills stay) |
 | `python scripts/check_tools.py` | health report |
 

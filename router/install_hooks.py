@@ -131,13 +131,16 @@ def json_mcp(path, label, w, uninstall=False):
 
 def codex_mcp(path, w, uninstall=False):
     text = Path(path).read_text(encoding="utf-8") if Path(path).exists() else ""
-    pat = re.compile(r"\[mcp_servers\.jev-router\]\n(?:(?!\[).*\n?)*", re.M)
-    base = pat.sub("", text).rstrip("\n")
+    # the section ends at the next table OR comment line (our generated agents block starts with one)
+    pat = re.compile(r"\[mcp_servers\.jev-router\]\n(?:(?![\[#]).*\n?)*", re.M)
+    block = f'[mcp_servers.jev-router]\ncommand = {json.dumps(P.python_cmd())}\nargs = [{json.dumps(fwd(SHIM_MCP))}]\n\n'
+    m = pat.search(text)
     if uninstall:
-        new = base + "\n" if base else ""
+        new = (text[:m.start()] + text[m.end():]) if m else text
+    elif m:  # replace in place - other generated blocks may follow it
+        new = text[:m.start()] + block + text[m.end():]
     else:
-        block = f'[mcp_servers.jev-router]\ncommand = {json.dumps(P.python_cmd())}\nargs = [{json.dumps(fwd(SHIM_MCP))}]\n'
-        new = (base + "\n\n" if base else "") + block  # always last: stable across re-runs
+        new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
     w.write(path, new, "codex MCP")
 
 

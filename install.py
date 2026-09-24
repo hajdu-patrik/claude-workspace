@@ -6,7 +6,7 @@
     python install.py --dry-run       show what would change, change nothing
     python install.py detect          report which AI tools are installed and logged in
     python install.py models --probe  test which Codex/Antigravity models your accounts can use
-    python install.py remote [--name "My PC"] [--remove]   optional phone / other-device access
+    python install.py remote [--name "My PC"] [--workdir <folder>] [--remove]   phone / other-device access
     python install.py uninstall       remove hooks, MCP entries and remote access (skills stay)
 
 Options: --providers=claude,codex,antigravity  --jev-token=<token>  --remote[=<name>]  --no-migrate
@@ -38,9 +38,32 @@ CONFIG = STATE / "config.json"
 MODELS_LOCAL = STATE / "models.local.json"
 ALL = ("claude", "codex", "antigravity")
 
-ARGS = sys.argv[1:]
-FLAGS = {a.split("=", 1)[0]: (a.split("=", 1)[1] if "=" in a else True) for a in ARGS if a.startswith("--")}
-COMMAND = next((a for a in ARGS if not a.startswith("--")), "setup")
+VALUE_FLAGS = ("--name", "--providers", "--jev-token", "--remote", "--workdir")
+
+
+def parse_args(argv):
+    """Accepts both `--flag=value` and `--flag value` (for the flags that take a value)."""
+    flags, positional, i = {}, [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--"):
+            key, eq, val = a.partition("=")
+            if eq:
+                flags[key] = val
+            elif key in VALUE_FLAGS and i + 1 < len(argv) and not argv[i + 1].startswith("--") \
+                    and not (key == "--remote" and argv[i + 1] in ("detect", "models", "remote", "uninstall")):
+                flags[key] = argv[i + 1]
+                i += 1
+            else:
+                flags[key] = True
+        else:
+            positional.append(a)
+        i += 1
+    return flags, positional
+
+
+FLAGS, POSITIONAL = parse_args(sys.argv[1:])
+COMMAND = POSITIONAL[0] if POSITIONAL else "setup"
 YES = "--yes" in FLAGS
 DRY = "--dry-run" in FLAGS
 
@@ -151,11 +174,18 @@ def extras(providers, cfg):
         if not isinstance(name, str):
             default = cfg.get("remote_name") or P.hostname()
             name = (input(f"  Name shown on your other devices [{default}]: ").strip() if sys.stdin.isatty() and not YES else "") or default
-        for tool, ok, msg in remote.setup(name, providers, apply=not DRY):
+        for tool, ok, msg in remote.setup(name, providers, apply=not DRY, workdir=remote_workdir(cfg)):
             say(f"  [{'OK' if ok else '!!'}] {tool}: {msg}")
     say("  Speech-to-text (dictation into any app): see docs/speech-to-text.md")
     if P.IS_WINDOWS and not YES and not DRY and not P.find_exe("handy") and ask("  Install Handy (offline dictation) with winget now?", "n"):
         os.system("winget install --id cjpais.Handy -e --accept-source-agreements --accept-package-agreements")
+
+
+def remote_workdir(cfg):
+    """Folder remote Claude sessions start in: --workdir, else the saved one, else this repository.
+    Claude Code only serves trusted folders, and never the home directory."""
+    wd = FLAGS.get("--workdir")
+    return str(Path(wd).resolve()) if isinstance(wd, str) else (cfg.get("remote_workdir") or str(REPO))
 
 
 def next_steps(providers):
@@ -214,8 +244,9 @@ def main():
             return 0
         found = P.detect(deep=False)
         providers = [p for p, i in found.items() if i["installed"]]
-        name = FLAGS.get("--name") if isinstance(FLAGS.get("--name"), str) else (load_config().get("remote_name") or P.hostname())
-        for tool, ok, msg in remote.setup(name, providers, apply=not DRY):
+        cfg = load_config()
+        name = FLAGS.get("--name") if isinstance(FLAGS.get("--name"), str) else (cfg.get("remote_name") or P.hostname())
+        for tool, ok, msg in remote.setup(name, providers, apply=not DRY, workdir=remote_workdir(cfg)):
             say(f"[{'OK' if ok else '!!'}] {tool}: {msg}")
         return 0
     if COMMAND == "uninstall":

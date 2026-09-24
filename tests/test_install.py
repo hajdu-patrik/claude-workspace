@@ -123,3 +123,20 @@ def test_install_hooks_idempotent_and_uninstall(tmp_path, monkeypatch):
 
 def test_python_cmd_has_no_spaces():
     assert " " not in P.python_cmd()
+
+
+def test_codex_mcp_keeps_following_generated_block(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('model = "x"\n\n[mcp_servers.jev-router]\ncommand = "old"\nargs = ["a"]\n\n'
+                   "# >>> jev-router agents (generated - edit router/targets.json, not this block)\n"
+                   '[agents.a-low]\ndescription = "d"\n# <<< jev-router agents\n', encoding="utf-8")
+    w = install_hooks.Writer(apply=True)
+    install_hooks.codex_mcp(cfg, w)
+    text = cfg.read_text(encoding="utf-8")
+    assert "# >>> jev-router agents" in text and text.count("[mcp_servers.jev-router]") == 1
+    w2 = install_hooks.Writer(apply=True)
+    install_hooks.codex_mcp(cfg, w2)
+    assert w2.changes == 0  # idempotent
+    install_hooks.codex_mcp(cfg, install_hooks.Writer(apply=True), uninstall=True)
+    text = cfg.read_text(encoding="utf-8")
+    assert "mcp_servers.jev-router" not in text and "[agents.a-low]" in text
