@@ -64,7 +64,13 @@ GLOSSARY = {
     "skill": "skill skills", "keszseg": "skill skills", "agens": "agent agents", "utemez": "schedule",
 }
 FORMAT_NAMES = {"pdf", "docx", "xlsx", "pptx", "csv"}
+SKILL_FILE = "SKILL.md"
 _TOK = re.compile(r"[a-z0-9][a-z0-9+#.-]{2,}")
+# Linear-time patterns: no two adjacent quantifiers that can match the same characters.
+_FRONTMATTER = re.compile(r"^﻿?---[ \t]*\n(.*?)\n---", re.S)
+_NAME = re.compile(r"^name:(.*)$", re.M)
+_DESCRIPTION = re.compile(r"^description:(.*)$", re.M)
+_BLOCK_MARKERS = (">", "|", ">-", "|-", "")
 
 
 def _norm(text):
@@ -89,42 +95,69 @@ def tokens(text):
     return out
 
 
+def _unquote(value):
+    """A YAML scalar without its surrounding whitespace and one pair of optional quotes."""
+    value = value.strip()
+    if value[:1] in ("'", '"'):
+        value = value[1:]
+    if value[-1:] in ("'", '"'):
+        value = value[:-1]
+    return value.strip()
+
+
+def _indented_block(lines):
+    """A folded/literal YAML block: its indented lines (up to the next key), joined by spaces."""
+    out = []
+    for line in lines:
+        if line.startswith((" ", "\t")):
+            out.append(line.strip())
+        elif line.strip():
+            break
+    return " ".join(out)
+
+
 def parse_frontmatter(skill_md):
     """(name, description) from a SKILL.md YAML frontmatter - tolerant, no YAML dependency."""
     try:
         text = Path(skill_md).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None, None
-    m = re.match(r"^﻿?---\s*\n(.*?)\n---", text, re.S)
+    m = _FRONTMATTER.match(text)
     if not m:
         return None, None
-    fm, name, desc = m.group(1), None, None
-    nm = re.search(r"^name:\s*['\"]?(.+?)['\"]?\s*$", fm, re.M)
-    if nm:
-        name = nm.group(1).strip()
-    dm = re.search(r"^description:\s*(.*)$", fm, re.M)
+    fm, desc = m.group(1), None
+    nm = _NAME.search(fm)
+    name = (_unquote(nm.group(1)) or None) if nm else None
+    dm = _DESCRIPTION.search(fm)
     if dm:
         first = dm.group(1).strip()
-        if first in (">", "|", ">-", "|-", ""):  # folded/literal block: collect indented lines
-            rest = fm[dm.end():].split("\n")
-            lines = []
-            for line in rest[1:] if rest and not rest[0].strip() else rest:
-                if line.startswith((" ", "\t")):
-                    lines.append(line.strip())
-                elif line.strip():
-                    break
-            desc = " ".join(lines)
+        if first in _BLOCK_MARKERS:  # block scalar (or the value starts on the next line)
+            desc = _indented_block(fm[dm.end():].split("\n")[1:])
         else:
             desc = first.strip("'\"")
     return name, desc
+
+
+def is_skill_dir(path):
+    return (Path(path) / SKILL_FILE).is_file()
 
 
 def _skill_dirs(root, recursive):
     if not root.is_dir():
         return []
     if recursive:
-        return sorted({p.parent for p in root.rglob("SKILL.md")})
-    return sorted(p for p in root.iterdir() if (p / "SKILL.md").is_file())
+        return sorted({p.parent for p in root.rglob(SKILL_FILE)})
+    return sorted(p for p in root.iterdir() if is_skill_dir(p))
+
+
+def _qualified_name(name, skill_dir, root, prefix):
+    """The name the tool invokes the skill by: '<plugin>:<name>', '<prefix>:<name>' or plain."""
+    if prefix == "plugin":
+        try:  # .../plugins/synced/<account>/<plugin>/skills/<skill>/SKILL.md
+            return f"{skill_dir.relative_to(root).parts[1]}:{name}"
+        except (ValueError, IndexError):
+            return name
+    return f"{prefix}:{name}" if prefix else name
 
 
 def build_catalog():
@@ -132,15 +165,8 @@ def build_catalog():
     seen, items = set(), []
     for root, recursive, native_in, prefix in SOURCES:
         for d in _skill_dirs(root, recursive):
-            name, desc = parse_frontmatter(d / "SKILL.md")
-            name = name or d.name
-            if prefix == "plugin":
-                try:  # .../plugins/synced/<account>/<plugin>/skills/<skill>/SKILL.md
-                    name = f"{d.relative_to(root).parts[1]}:{name}"
-                except (ValueError, IndexError):
-                    pass
-            elif prefix:
-                name = f"{prefix}:{name}"
+            name, desc = parse_frontmatter(d / SKILL_FILE)
+            name = _qualified_name(name or d.name, d, root, prefix)
             if name in seen:
                 continue
             seen.add(name)
@@ -173,6 +199,47 @@ def _expand(prompt_tokens):
     return out
 
 
+def _doc_freq(docs):
+    df = {}
+    for _, nt, dt in docs:
+        for t in nt | dt:
+            df[t] = df.get(t, 0) + 1
+    return df
+
+
+def _overlap(q, nt, dt, df, n_docs):
+    """(score, hits, name_hits): IDF-weighted overlap of the prompt tokens q with one skill's name
+    tokens nt and description tokens dt; a hit on the name counts double."""
+    matched = [t for t in q if t in nt or t in dt]
+    score = sum(((2 if t in nt else 1) * math.log(1 + n_docs / df.get(t, 1)) for t in matched), 0.0)
+    return score, len(matched), sum(t in nt for t in matched)
+
+
+def _name_evidence(nt, name_hits, hits, df):
+    """The name counts as "hit" only if most of its words match AND the prompt overlaps the skill in
+    at least two places ("auth" alone does not make google-cloud-recipe-auth the skill for
+    "refactor the auth module"; "learning" alone does not make `learn` the skill for an ML question)."""
+    if not nt:
+        return False
+    # e.g. "brainstorm" is distinctive on its own; short everyday words ("learn", "docs") are not
+    rare_name = name_hits == len(nt) and all(df.get(t, 0) <= 3 and len(t) >= 6 for t in nt)
+    only = next(iter(nt))
+    short_single = len(nt) == 1 and len(only) < 6 and only not in FORMAT_NAMES  # "learn", "docs": too ambiguous alone
+    return name_hits / len(nt) >= 0.66 and (hits >= 2 or rare_name) and not short_single
+
+
+def _mention_bonus(skill_name, raw):
+    """Score bonus when the prompt names the skill itself; 0 when it does not."""
+    if skill_name.lower() in raw:  # explicit mention, e.g. "use the cloud-run-basics skill"
+        return 6
+    base = skill_name.split(":")[-1].lower()
+    distinctive = "-" in base or base in FORMAT_NAMES or re.search(r"\b" + re.escape(base) + r"\s+(skill|keszseg)", raw)
+    # (?![a-z0-9]) rather than (?![\w-]): Hungarian suffixes are hyphenated ("pdf-et")
+    if distinctive and re.search(r"(?<![\w-])" + re.escape(base) + r"(?![a-z0-9])", raw):
+        return 4  # a distinctive base name ("pptx", "cloud-run-basics") named in the prompt
+    return 0
+
+
 def prefilter(prompt, catalog, n=8, min_score=1.5):
     """[(score, skill_dict)] best-first, at most n, only candidates scoring >= min_score.
     Score: IDF-weighted overlap of prompt tokens with the skill's name+description tokens; a hit
@@ -181,38 +248,16 @@ def prefilter(prompt, catalog, n=8, min_score=1.5):
         return []
     # name tokens: only the part after "plugin:" - the plugin/vendor prefix says nothing about the task
     docs = [(s, tokens(s["name"].split(":")[-1].replace("-", " ")), tokens(s["description"])) for s in catalog]
-    df = {}
-    for _, nt, dt in docs:
-        for t in nt | dt:
-            df[t] = df.get(t, 0) + 1
-    N = len(docs)
+    df = _doc_freq(docs)
     q = _expand(tokens(prompt))
     raw = _norm(prompt)
     scored = []
     for s, nt, dt in docs:
-        score, hits, name_hits = 0.0, 0, 0
-        for t in q:
-            if t in nt or t in dt:
-                w = math.log(1 + N / df.get(t, 1))
-                score += 2 * w if t in nt else w
-                hits += 1
-                name_hits += t in nt
-        # the name counts as "hit" only if most of its words match AND the prompt overlaps the skill in
-        # at least two places ("auth" alone does not make google-cloud-recipe-auth the skill for
-        # "refactor the auth module"; "learning" alone does not make `learn` the skill for an ML question)
-        cov = name_hits / len(nt) if nt else 0.0
-        # e.g. "brainstorm" is distinctive on its own; short everyday words ("learn", "docs") are not
-        rare_name = cov == 1.0 and all(df.get(t, 0) <= 3 and len(t) >= 6 for t in nt)
-        short_single = (len(nt) == 1 and len(next(iter(nt))) < 6  # "learn", "docs": too ambiguous alone
-                        and next(iter(nt)) not in FORMAT_NAMES)
-        name_hit = cov >= 0.66 and (hits >= 2 or rare_name) and not short_single
-        base = s["name"].split(":")[-1].lower()
-        if s["name"].lower() in raw:  # explicit mention, e.g. "use the cloud-run-basics skill"
-            score += 6
-            name_hit = True
-        elif ("-" in base or base in FORMAT_NAMES or re.search(r"\b" + re.escape(base) + r"\s+(skill|keszseg)", raw)) and re.search(r"(?<![\w-])" + re.escape(base) + r"(?![a-z0-9])", raw):
-            # (?![a-z0-9]) rather than (?![\w-]): Hungarian suffixes are hyphenated ("pdf-et")
-            score += 4  # a distinctive base name ("pptx", "cloud-run-basics") named in the prompt
+        score, hits, name_hits = _overlap(q, nt, dt, df, len(docs))
+        name_hit = _name_evidence(nt, name_hits, hits, df)
+        bonus = _mention_bonus(s["name"], raw)
+        if bonus:
+            score += bonus
             name_hit = True
         if score >= min_score:
             # _hits/_name_hit: evidence strength, used by the local mock to decide whether to commit

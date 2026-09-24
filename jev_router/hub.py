@@ -19,6 +19,7 @@ directory is a known Claude Code regression.
 Safety: never deletes a real directory. Only junctions this tool can prove it owns (pointing into
 the hub or jev_router/skills/) are ever removed/replaced; a name collision is reported, not resolved.
 """
+import itertools
 import json
 import os
 import re
@@ -104,7 +105,11 @@ def ensure_link(link, target, label):
 
 
 def hub_skills():
-    return sorted(p for p in HUB.iterdir() if (p / "SKILL.md").is_file()) if HUB.is_dir() else []
+    return sorted(p for p in HUB.iterdir() if catalog.is_skill_dir(p)) if HUB.is_dir() else []
+
+
+def repo_skills():
+    return sorted(p for p in REPO_SKILLS.iterdir() if catalog.is_skill_dir(p))
 
 
 # --- commands -------------------------------------------------------------------------------------
@@ -125,7 +130,7 @@ def cmd_migrate():
     for d in candidates:
         if d.name in APP_MANAGED or d.name.startswith(".") or is_junction(d) or not d.is_dir():
             continue
-        if not (d / "SKILL.md").is_file():
+        if not catalog.is_skill_dir(d):
             print(f"[SKIP] {d.name}: no SKILL.md")
             continue
         dest = HUB / d.name
@@ -144,11 +149,20 @@ def cmd_migrate():
 
 def cmd_link():
     # 1) repo-owned skills are exposed through the hub
-    for d in sorted(p for p in REPO_SKILLS.iterdir() if (p / "SKILL.md").is_file()):
+    for d in repo_skills():
         ensure_link(HUB / d.name, d, f"hub <- repo '{d.name}'")
-    # 2) every hub skill into Claude Code and Codex
+    names = _link_hub_skills()
+    _drop_stale_links(names)
+    if "antigravity" in PROVIDERS:
+        _register_hub_with_antigravity()
+
+
+def _link_hub_skills():
+    """2) every hub skill into Claude Code and Codex. Returns the skill names."""
     names = set()
-    for s in hub_skills() + ([HUB / d.name for d in REPO_SKILLS.iterdir() if (d / "SKILL.md").is_file()] if not APPLY else []):
+    # a dry run has not linked the repo skills into the hub yet: plan their tool links too
+    pending = [] if APPLY else [HUB / d.name for d in repo_skills()]
+    for s in hub_skills() + pending:
         if s.name in names:
             continue
         names.add(s.name)
@@ -156,18 +170,22 @@ def cmd_link():
             ensure_link(CLAUDE_SKILLS / s.name, s, "claude")
         if "codex" in PROVIDERS:
             ensure_link(CODEX_SKILLS / s.name, s, "codex")
-    # 3) drop stale links we own (target gone / skill removed from the hub); ~/.codex/skills is
-    #    Codex's legacy location - its skills are served from ~/.agents/skills instead
+    return names
+
+
+def _drop_stale_links(names):
+    """3) drop stale links we own (target gone / skill removed from the hub); ~/.codex/skills is
+    Codex's legacy location - its skills are served from ~/.agents/skills instead."""
     for base in (CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS):
-        if not base.is_dir():
-            continue
-        for link in base.iterdir():
+        links = base.iterdir() if base.is_dir() else []
+        for link in links:
             if owned(link) and (base == LEGACY_CODEX_SKILLS or link.name not in names or not link.exists()):
                 act(f"remove stale/legacy link {link}", lambda l=link: rm_junction(l))
-    if "antigravity" not in PROVIDERS:
-        return
-    # 4) Antigravity: one manifest entry for the whole hub. Must be an ABSOLUTE path: agy 1.2.9
-    #    rejects "~/.skills" at runtime ("must be an absolute path"), despite its docs.
+
+
+def _register_hub_with_antigravity():
+    """4) Antigravity: one manifest entry for the whole hub. Must be an ABSOLUTE path: agy 1.2.9
+    rejects "~/.skills" at runtime ("must be an absolute path"), despite its docs."""
     cfg = {}
     if AGY_SKILLS_JSON.exists():
         try:
@@ -190,11 +208,38 @@ def cmd_link():
             lambda: AGY_SKILLS_JSON.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8"))
 
 
+_TEMPLATE_FRONTMATTER = re.compile(r"---[ \t]*\n(.*?)\n---[ \t]*\n", re.S)
+_TEMPLATE_FIELD = re.compile(r"^(\w+):(.*)$", re.M)
+
+
 def _split_template(path):
     text = path.read_text(encoding="utf-8")
-    m = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", text, re.S)
-    fm = dict(re.findall(r"^(\w+):\s*(.*)$", m.group(1), re.M)) if m else {}
-    return fm, (m.group(2) if m else text).strip()
+    m = _TEMPLATE_FRONTMATTER.match(text)
+    fm = {k: v.strip() for k, v in _TEMPLATE_FIELD.findall(m.group(1))} if m else {}
+    return fm, (text[m.end():] if m else text).strip()
+
+
+def _template(name):
+    tpl = AGENT_TEMPLATES / f"{name}.md"
+    return _split_template(tpl) if tpl.exists() else ({}, "Do the delegated task carefully.")
+
+
+def _generic_variants(provider, generic):
+    """(agent name template, model, effort, template file) for every selectable model x every allowed
+    effort under the provider's generic agent template."""
+    from . import core  # local import: only needed here
+    tpl_name = "{model}-worker" if provider == "claude" else "codex-worker"
+    for model, mdef in core.models_for(provider).items():
+        for effort in mdef["levels"]:
+            yield generic, model, effort, tpl_name.format(model=model)
+
+
+def _tier_variants(tiers, generic):
+    """(agent name template, model, effort, template file) of the tier-specific agents."""
+    specs = [s for s in tiers.values() if isinstance(s, dict) and s.get("agent") and s["agent"] != generic]
+    for spec in specs:
+        for effort in spec.get("efforts", []):
+            yield spec["agent"], spec["model"], effort, spec["agent"].split("-{")[0]
 
 
 def planned_agents():
@@ -206,91 +251,85 @@ def planned_agents():
     2) Tier-specific agents whose template isn't the provider's generic one (e.g. test-worker-*),
        for that tier's own effort range.
     Body/description come from agents/<name>.md (Claude: <model>-worker.md, Codex: codex-worker.md)."""
-    from . import core  # local import: only needed here
     targets = json.loads((PKG / "config" / "targets.json").read_text(encoding="utf-8"))
     out, seen = [], set()
-
-    def template(name):
-        tpl = AGENT_TEMPLATES / f"{name}.md"
-        return _split_template(tpl) if tpl.exists() else ({}, "Do the delegated task carefully.")
-
-    def add(provider, agent_tpl, model, effort, tpl_name):
-        name = agent_tpl.format(model=model, model_=model.replace(".", "_"), effort=effort)
-        if (provider, name) in seen:
-            return
-        seen.add((provider, name))
-        fm, body = template(tpl_name)
-        desc = (fm.get("description") or f"{model} worker").rstrip(".")
-        out.append((provider, name, model, effort,
-                    f"{desc} Fixed model {model}, reasoning effort {effort}. Use when the [router] context names {name}.", body))
-
     for provider in (p for p in ("claude", "codex") if p in PROVIDERS):
         cfg = targets.get(provider, {})
         generic = cfg.get("agent_template")
-        for model, mdef in core.models_for(provider).items():
-            for effort in mdef["levels"]:
-                add(provider, generic, model, effort, f"{model}-worker" if provider == "claude" else "codex-worker")
-        for spec in cfg.get("tiers", {}).values():
-            if isinstance(spec, dict) and spec.get("agent") and spec["agent"] != generic:
-                for effort in spec.get("efforts", []):
-                    add(provider, spec["agent"], spec["model"], effort, spec["agent"].split("-{")[0])
+        variants = itertools.chain(_generic_variants(provider, generic), _tier_variants(cfg.get("tiers", {}), generic))
+        for agent_tpl, model, effort, tpl_name in variants:
+            name = agent_tpl.format(model=model, model_=model.replace(".", "_"), effort=effort)
+            if (provider, name) in seen:
+                continue
+            seen.add((provider, name))
+            fm, body = _template(tpl_name)
+            desc = (fm.get("description") or f"{model} worker").rstrip(".")
+            out.append((provider, name, model, effort,
+                        f"{desc} Fixed model {model}, reasoning effort {effort}. Use when the [router] context names {name}.", body))
     return out
+
+
+def _write_if_changed(path, content):
+    if not path.exists() or path.read_text(encoding="utf-8") != content:
+        act(f"write {path}", lambda: (path.parent.mkdir(parents=True, exist_ok=True),
+                                      path.write_text(content, encoding="utf-8")))
+
+
+def _remove_stale(folder, pattern, want, label):
+    """Removes the generated files in `folder` that are no longer planned (never a hand-written one)."""
+    for f in folder.glob(pattern) if folder.is_dir() else []:
+        if f.stem not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
+            act(f"remove stale generated {label} {f}", f.unlink)
 
 
 def cmd_agents():
     plan = planned_agents()
-    # Claude: one .md per variant
-    want = {name for p, name, *_ in plan if p == "claude"}
-    for provider, name, model, effort, desc, body in plan:
-        if provider != "claude":
-            continue
-        path = CLAUDE_AGENTS / f"{name}.md"
-        content = (f"---\nname: {name}\ndescription: {desc}\nmodel: {model}\neffort: {effort}\n# {GEN_MARK}\n---\n{body}\n")
-        if not path.exists() or path.read_text(encoding="utf-8") != content:
-            act(f"write {path}", lambda p=path, c=content: (p.parent.mkdir(parents=True, exist_ok=True),
-                                                             p.write_text(c, encoding="utf-8")))
-    for f in CLAUDE_AGENTS.glob("*.md") if CLAUDE_AGENTS.is_dir() and "claude" in PROVIDERS else []:
-        if f.stem not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
-            act(f"remove stale generated agent {f}", f.unlink)
-    # Codex: role file per variant + one managed block in config.toml
-    if "codex" not in PROVIDERS:
-        return
+    _write_claude_agents([a for a in plan if a[0] == "claude"])
+    if "codex" in PROVIDERS:
+        _write_codex_agents([a for a in plan if a[0] == "codex"])
+
+
+def _write_claude_agents(plan):
+    """Claude: one .md per variant."""
+    for _, name, model, effort, desc, body in plan:
+        _write_if_changed(CLAUDE_AGENTS / f"{name}.md",
+                          f"---\nname: {name}\ndescription: {desc}\nmodel: {model}\neffort: {effort}\n# {GEN_MARK}\n---\n{body}\n")
+    if "claude" in PROVIDERS:
+        _remove_stale(CLAUDE_AGENTS, "*.md", {a[1] for a in plan}, "agent")
+
+
+def _write_codex_agents(plan):
+    """Codex: role file per variant + one managed block in config.toml."""
     block = [TOML_BEGIN]
-    want = set()
-    for provider, name, model, effort, desc, body in plan:
-        if provider != "codex":
-            continue
-        want.add(name)
+    for _, name, model, effort, desc, body in plan:
         path = CODEX_AGENTS / f"{name}.toml"
-        role = (f"# {GEN_MARK}\nmodel = {json.dumps(model)}\nmodel_reasoning_effort = {json.dumps(effort)}\n"
-                f"developer_instructions = {json.dumps(body)}\n")
-        if not path.exists() or path.read_text(encoding="utf-8") != role:
-            act(f"write {path}", lambda p=path, c=role: (p.parent.mkdir(parents=True, exist_ok=True),
-                                                          p.write_text(c, encoding="utf-8")))
+        _write_if_changed(path, f"# {GEN_MARK}\nmodel = {json.dumps(model)}\nmodel_reasoning_effort = {json.dumps(effort)}\n"
+                                f"developer_instructions = {json.dumps(body)}\n")
         block += [f"[agents.{name}]", f"description = {json.dumps(desc)}",
                   f"config_file = {json.dumps(str(path).replace(chr(92), '/'))}", ""]
-    for f in CODEX_AGENTS.glob("*.toml") if CODEX_AGENTS.is_dir() else []:
-        if f.stem not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
-            act(f"remove stale generated codex role {f}", f.unlink)
+    want = {a[1] for a in plan}
+    _remove_stale(CODEX_AGENTS, "*.toml", want, "codex role")
     block.append(TOML_END)
     cfg = CODEX_CONFIG.read_text(encoding="utf-8") if CODEX_CONFIG.exists() else ""
-    # match the marker by its stable prefix: older versions wrote a different hint after it
-    pattern = re.compile(r"# >>> jev-router agents[^\n]*\n.*?" + re.escape(TOML_END) + r"\n?", re.S)
-    new_block = "\n".join(block) + "\n"
-    old = pattern.search(cfg)
-    if old:
-        # Codex appends its own tables (e.g. [hooks.state] = the user's hook trust) at the end of the
-        # file, which can land INSIDE our block: keep every non-[agents.*] table, re-emitted after it.
-        tables = re.split(r"(?m)^(?=\[)", old.group(0).replace(TOML_END, ""))
-        foreign = "".join(t for t in tables if t.startswith("[") and not t.startswith("[agents.")).strip("\n")
-        new_cfg = cfg[:old.start()] + new_block + cfg[old.end():]
-        if foreign:
-            new_cfg = new_cfg.rstrip("\n") + "\n\n" + foreign + "\n"
-    else:
-        new_cfg = cfg.rstrip("\n") + "\n\n" + new_block
+    new_cfg = _with_agents_block(cfg, "\n".join(block) + "\n")
     if new_cfg != cfg:
         act(f"{CODEX_CONFIG}: update [agents.*] block ({len(want)} roles)",
             lambda: CODEX_CONFIG.write_text(new_cfg, encoding="utf-8"))
+
+
+def _with_agents_block(cfg, new_block):
+    """config.toml text with our generated [agents.*] block replaced, or appended when missing."""
+    # match the marker by its stable prefix: older versions wrote a different hint after it
+    pattern = re.compile(r"# >>> jev-router agents[^\n]*\n.*?" + re.escape(TOML_END) + r"\n?", re.S)
+    old = pattern.search(cfg)
+    if not old:
+        return cfg.rstrip("\n") + "\n\n" + new_block
+    # Codex appends its own tables (e.g. [hooks.state] = the user's hook trust) at the end of the
+    # file, which can land INSIDE our block: keep every non-[agents.*] table, re-emitted after it.
+    tables = re.split(r"(?m)^(?=\[)", old.group(0).replace(TOML_END, ""))
+    foreign = "".join(t for t in tables if t.startswith("[") and not t.startswith("[agents.")).strip("\n")
+    new_cfg = cfg[:old.start()] + new_block + cfg[old.end():]
+    return new_cfg.rstrip("\n") + "\n\n" + foreign + "\n" if foreign else new_cfg
 
 
 def cmd_catalog():
@@ -302,25 +341,31 @@ def cmd_catalog():
     print(f"catalog: {len(items)} skills -> {catalog.CATALOG}  (native: {by})")
 
 
+def _check_skill_folder(base):
+    """Reports broken links and folders without a SKILL.md; returns the number of broken links."""
+    problems = 0
+    for p in base.iterdir():
+        if p.name in APP_MANAGED or p.is_file():
+            continue
+        if is_junction(p) and not p.exists():
+            print(f"[FAIL] broken link: {p}")
+            problems += 1
+        elif p.is_dir() and not catalog.is_skill_dir(p):
+            print(f"[WARN] no SKILL.md: {p}")
+    return problems
+
+
 def cmd_doctor():
     problems = 0
     for base in (CLAUDE_SKILLS, CODEX_SKILLS, HUB):
-        if not base.is_dir():
+        if base.is_dir():
+            problems += _check_skill_folder(base)
+        else:
             print(f"[WARN] missing: {base}")
-            continue
-        for p in base.iterdir():
-            if p.name in APP_MANAGED or p.is_file():
-                continue
-            if is_junction(p) and not p.exists():
-                print(f"[FAIL] broken link: {p}")
-                problems += 1
-            elif p.is_dir() and not (p / "SKILL.md").is_file():
-                print(f"[WARN] no SKILL.md: {p}")
     names = {}
     for s in catalog.build_catalog():
-        base = s["name"].split(":")[-1]
-        names.setdefault(base, []).append(s["name"])
-    for base, full in names.items():
+        names.setdefault(s["name"].split(":")[-1], []).append(s["name"])
+    for full in names.values():
         if len(full) > 1:
             print(f"[INFO] same skill name from several sources: {', '.join(full)}")
     print(f"doctor: {problems} problem(s)")

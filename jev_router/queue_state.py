@@ -92,10 +92,9 @@ def _load(path):
 
 
 def _prune(data, now):
-    for key in list(data):
-        data[key] = [e for e in data[key] if now - e.get("ts", 0) < TTL_S]
-        if not data[key]:
-            del data[key]
+    """The entries younger than TTL_S; a session left without any is dropped."""
+    fresh = {key: [e for e in entries if now - e.get("ts", 0) < TTL_S] for key, entries in data.items()}
+    return {key: entries for key, entries in fresh.items() if entries}
 
 
 def on_submit(state_dir, provider, session_id, cwd, summary, last_activity=None):
@@ -110,8 +109,7 @@ def on_submit(state_dir, provider, session_id, cwd, summary, last_activity=None)
     key = f"{provider}:{session_id}"
     norm_cwd = os.path.normcase(os.path.abspath(cwd)) if cwd else ""
     with _Lock(lock):
-        data = _load(path)
-        _prune(data, now)
+        data = _prune(_load(path), now)
         if last_activity is not None and now - last_activity > IDLE_S:
             data.pop(key, None)
         ahead = list(data.get(key, []))

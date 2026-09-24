@@ -108,18 +108,24 @@ def test_claude_never_ultra():
 # --- full route per provider ------------------------------------------------------------------------
 def test_route_claude_hard_code_goes_to_deep_worker_with_verify():
     d, text, hit, err = core.route("Refaktoráld az egész kódbázist hexagonális architektúrára", "claude")
-    assert d["primary"] == "deep" and d["verify"] == "codex"
-    assert "`opus-worker-xhigh`" in text and "cli-bridge" in text and "Respond in Hungarian." in text
-    assert not hit and err is None
+    assert d["primary"] == "deep"
+    assert d["verify"] == "codex"
+    assert "`opus-worker-xhigh`" in text
+    assert "cli-bridge" in text
+    assert "Respond in Hungarian." in text
+    assert not hit
+    assert err is None
 
 
 def test_route_codex_effort_always_valid_for_model():
     d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex")
-    assert d["primary"] == "deep" and "`gpt-5_6-terra-" in text
+    assert d["primary"] == "deep"
+    assert "`gpt-5_6-terra-" in text
     assert d["effort"] in ("high", "xhigh", "max")
     assert "Respond in English." in text
     d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex", session_model="gpt-5.6-terra")
-    assert "stay in this session" in text and "Spawn" not in text
+    assert "stay in this session" in text
+    assert "Spawn" not in text
 
 
 def test_ultra_is_never_offered_or_accepted(monkeypatch):
@@ -134,7 +140,9 @@ def test_ultra_is_never_offered_or_accepted(monkeypatch):
                         "effort": {"choice": "ultra", "confidence": 0.9}, "model": {"choice": "gpt-5.6-terra", "confidence": 0.9}}}
     monkeypatch.setattr(core, "ask_jev", lambda p, q: json.loads(json.dumps(fake)))
     d, text, _, _ = core.route("anything", "codex", backend="jev")
-    assert d["effort"] == "max" and "`gpt-5_6-terra-max`" in text and "ultra" not in text
+    assert d["effort"] == "max"
+    assert "`gpt-5_6-terra-max`" in text
+    assert "ultra" not in text
 
 
 def test_jev_model_pick_every_provider(monkeypatch):
@@ -147,7 +155,8 @@ def test_jev_model_pick_every_provider(monkeypatch):
     assert "`sonnet-worker-low`" in text
     monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gpt-6-sol", "high"))  # rejected for ChatGPT accounts
     d, text, _, _ = core.route("Write a haiku", "codex", backend="jev")
-    assert d.get("model") is None and "gpt-6-sol" not in text
+    assert d.get("model") is None
+    assert "gpt-6-sol" not in text
     monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gemini-3.1-pro", "medium"))  # pro has low/high only
     _, text, _, _ = core.route("Write a haiku", "antigravity", backend="jev")
     assert "`gemini-3.1-pro-high`" in text
@@ -158,7 +167,8 @@ def test_jev_model_pick_every_provider(monkeypatch):
 
 def test_route_antigravity_model_name_has_effort():
     d, text, _, _ = core.route("Mi Magyarország fővárosa?", "antigravity")
-    assert d["primary"] == "fast" and "gemini-3.8-flash-low" in text
+    assert d["primary"] == "fast"
+    assert "gemini-3.8-flash-low" in text
 
 
 def test_route_skill_native_vs_cross_tool():
@@ -170,7 +180,8 @@ def test_route_skill_native_vs_cross_tool():
 
 def test_overrides_whole_tag_only():
     d, _, _, _ = core.route("#opus explain this", "claude")
-    assert d["backend"] == "override" and d["primary"] == "deep"
+    assert d["backend"] == "override"
+    assert d["primary"] == "deep"
     d, _, _, _ = core.route("#faster please explain", "codex")
     assert d["backend"] != "override"
 
@@ -178,9 +189,11 @@ def test_overrides_whole_tag_only():
 def test_cloud_mode_replaces_agents_and_cli(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_REMOTE", "true")
     d, text, _, _ = core.route("#codex review this", "claude")
-    assert d["primary"] == "main" and "cli-bridge" not in text
+    assert d["primary"] == "main"
+    assert "cli-bridge" not in text
     d, _, _, _ = core.route("Refaktoráld az egész kódbázist hexagonális architektúrára", "claude")
-    assert d["primary"] == "main" and d["verify"] == ""
+    assert d["primary"] == "main"
+    assert d["verify"] == ""
 
 
 def test_jev_failure_falls_back_to_local(monkeypatch):
@@ -188,7 +201,8 @@ def test_jev_failure_falls_back_to_local(monkeypatch):
         raise TimeoutError("jev down")
     monkeypatch.setattr(core, "ask_jev", boom)
     d, text, _, err = core.route("What is 2+2?", "claude", backend="jev")
-    assert d["backend"] == "local" and "jev down" in err
+    assert d["backend"] == "local"
+    assert "jev down" in err
 
 
 def test_jev_answers_are_used(monkeypatch):
@@ -197,7 +211,8 @@ def test_jev_answers_are_used(monkeypatch):
                         "effort": {"choice": "ultra", "confidence": 0.8}}, "model": "jev-1.13.0"}
     monkeypatch.setattr(core, "ask_jev", lambda p, q: json.loads(json.dumps(fake)))
     d, text, _, _ = core.route("anything", "claude", backend="jev")
-    assert d["backend"] == "jev" and d["effort"] == "max"  # ultra stripped for Claude, clamped into deep tier
+    assert d["backend"] == "jev"
+    assert d["effort"] == "max"  # ultra stripped for Claude, clamped into deep tier
 
 
 # --- hook I/O ------------------------------------------------------------------------------------
@@ -212,7 +227,8 @@ def run(monkeypatch, capsys, provider, event, payload):
 def test_hook_claude_codex_shape(monkeypatch, capsys, provider):
     out = run(monkeypatch, capsys, provider, "UserPromptSubmit", {"prompt": "Write unit tests for the parser"})
     ctx = out["hookSpecificOutput"]["additionalContext"]
-    assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit" and ctx.startswith("[router]")
+    assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+    assert ctx.startswith("[router]")
 
 
 @pytest.mark.parametrize("prompt", ["<task-notification>\n<task-id>x</task-id>", "/help", "#privat titkos dolog", "hi"])
@@ -240,10 +256,12 @@ def test_hook_antigravity_reads_transcript_once_per_turn(monkeypatch, capsys, tm
     payload = {"conversationId": "c1", "transcriptPath": str(tr), "invocationNum": 1}
     out = run(monkeypatch, capsys, "antigravity", "PreInvocation", payload)
     msg = out["injectSteps"][0]["ephemeralMessage"]
-    assert "task=test" in msg and "Respond in Hungarian." in msg
+    assert "task=test" in msg
+    assert "Respond in Hungarian." in msg
     assert run(monkeypatch, capsys, "antigravity", "PreInvocation", {**payload, "invocationNum": 2}) is None
     log = [json.loads(l) for l in run_hook.LOG_FILE.read_text(encoding="utf-8").splitlines()]
-    assert len(log) == 1 and log[0]["provider"] == "antigravity"
+    assert len(log) == 1
+    assert log[0]["provider"] == "antigravity"
 
 
 def test_hook_antigravity_missing_transcript(monkeypatch, capsys, tmp_path):
@@ -253,7 +271,8 @@ def test_hook_antigravity_missing_transcript(monkeypatch, capsys, tmp_path):
 def test_log_redacts_secrets(monkeypatch, capsys):
     run(monkeypatch, capsys, "claude", "UserPromptSubmit", {"prompt": "use key sk-abcdefghijklmnopqrstuvwxyz123456 in the code"})
     entry = json.loads(run_hook.LOG_FILE.read_text(encoding="utf-8").splitlines()[-1])
-    assert "sk-abc" not in entry["prompt"] and "[redacted]" in entry["prompt"]
+    assert "sk-abc" not in entry["prompt"]
+    assert "[redacted]" in entry["prompt"]
 
 
 # --- skills ------------------------------------------------------------------------------------------
@@ -263,9 +282,16 @@ def test_parse_frontmatter_block_description(tmp_path):
     assert skill_index.parse_frontmatter(p) == ("demo", "Line one line two.")
 
 
+def test_parse_frontmatter_value_on_next_line(tmp_path):
+    p = tmp_path / "SKILL.md"
+    p.write_text("---\nname:\ndescription:\n  Line one\n  line two.\nlicense: x\n---\nbody", encoding="utf-8")
+    assert skill_index.parse_frontmatter(p) == (None, "Line one line two.")
+
+
 def test_prefilter_hungarian_glossary():
     top = skill_index.prefilter("Excel táblázat összesítése", CATALOG)
-    assert top and top[0][1]["name"] == "anthropic-skills:xlsx"
+    assert top
+    assert top[0][1]["name"] == "anthropic-skills:xlsx"
     assert skill_index.prefilter("Mi Magyarország fővárosa?", CATALOG) == []
 
 
@@ -279,7 +305,8 @@ def test_mcp_protocol():
     r = mcp_server.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                            "params": {"name": "route_prompt", "arguments": {"prompt": "Refaktoráld az egész kódbázist"}}})
     text = r["result"]["content"][0]["text"]
-    assert "[router]" in text and "subagent" not in text  # claude-chat: advice only, no subagents
+    assert "[router]" in text
+    assert "subagent" not in text  # claude-chat: advice only, no subagents
     assert mcp_server.handle({"jsonrpc": "2.0", "id": 4, "method": "nope"})["error"]["code"] == -32601
 
 
@@ -318,6 +345,8 @@ def test_extra_agents_strict_clamps():
     assert core.extra_agents({"choice": "4", "confidence": 0.5}, 2) == 3        # unsure -> one lower
     assert core.extra_agents({"choice": "3", "confidence": 0.95}, 1) == 1       # not hard -> at most +1
     assert core.extra_agents({"choice": "9", "confidence": 0.95}, 2) == 4       # never above the cap
-    assert core.extra_agents({"choice": "x"}, 2) == 0 and core.extra_agents(None, 2) == 0
+    assert core.extra_agents({"choice": "x"}, 2) == 0
+    assert core.extra_agents(None, 2) == 0
     q = core.build_questions({})
-    assert list(q["agents"]["criteria"]) == ["0", "1", "2", "3", "4"] and "strict" in q["agents"]["instructions"]
+    assert list(q["agents"]["criteria"]) == ["0", "1", "2", "3", "4"]
+    assert "strict" in q["agents"]["instructions"]

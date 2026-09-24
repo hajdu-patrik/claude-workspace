@@ -52,6 +52,14 @@ def log(entry):
         pass
 
 
+def _user_request(content):
+    """The text between <USER_REQUEST> and </USER_REQUEST> (Antigravity wraps the typed prompt in
+    them, followed by metadata); the whole content when the tags are missing."""
+    _, opened, rest = content.partition("<USER_REQUEST>")
+    body, closed, _ = rest.partition("</USER_REQUEST>")
+    return body if opened and closed else content
+
+
 def _antigravity_prompt(payload):
     """(prompt, turn_key) of the latest user turn in the transcript, or (None, None).
     Never raises: a missing/odd transcript just means the hook does nothing this call."""
@@ -67,9 +75,7 @@ def _antigravity_prompt(payload):
                 continue
             if not isinstance(entry, dict) or entry.get("type") != "USER_INPUT":
                 continue
-            content = entry.get("content") or ""
-            m = re.search(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", content, re.S)
-            text = (m.group(1) if m else content).strip()
+            text = _user_request(entry.get("content") or "").strip()
             if text:
                 return text, f"{payload.get('conversationId', '')}:{entry.get('step_index', len(lines))}"
     except Exception:  # noqa: BLE001 - a hook must never crash the host tool
@@ -98,7 +104,7 @@ def extract_prompt(raw, provider):
     """Returns (prompt_text_or_None, payload_dict_or_None, turn_key_or_None)."""
     try:
         payload = json.loads(raw.decode("utf-8-sig"))  # utf-8-sig: PowerShell 5.1 pipes can prepend a BOM
-    except (ValueError, UnicodeDecodeError, AttributeError):
+    except (ValueError, AttributeError):  # ValueError includes UnicodeDecodeError and JSONDecodeError
         return None, None, None
     if not isinstance(payload, dict):
         return None, None, None
@@ -121,7 +127,7 @@ def _json_object(raw):
     try:
         payload = json.loads(raw.decode("utf-8-sig"))
         return payload if isinstance(payload, dict) else {}
-    except (ValueError, UnicodeDecodeError, AttributeError):
+    except (ValueError, AttributeError):  # ValueError includes UnicodeDecodeError and JSONDecodeError
         return {}
 
 
@@ -143,48 +149,42 @@ def _transcript_mtime(payload):
         return None
 
 
-def main(argv=None):
-    args = list(sys.argv[1:] if argv is None else argv)
-    cloud_only = "--cloud-only" in args
-    args = [a for a in args if a != "--cloud-only"]
-    if len(args) != 2:
-        print("Usage: python -m jev_router.hooks <claude|codex|antigravity> <hook_event_name> [--cloud-only]", file=sys.stderr)
-        return 0
-    if cloud_only and not core.is_cloud():
-        return 0  # locally the global (user-level) hook already runs - avoid double injection
-    provider, hook_event_name = args
+def on_stop(provider, raw):
+    """The agent finished its turn: release its queue entries."""
+    payload = _json_object(raw)
+    if payload.get("fullyIdle") is not False:  # Antigravity: background work may still run
+        queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
+    if provider == "antigravity":
+        print("{}")  # Antigravity expects a JSON object; no "decision" means "allow the stop"
 
-    raw = sys.stdin.buffer.read()
-    if hook_event_name == "Stop":  # the agent finished its turn: release its queue entries
-        payload = _json_object(raw)
-        if payload.get("fullyIdle") is not False:  # Antigravity: background work may still run
-            queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
-        if provider == "antigravity":
-            print("{}")  # Antigravity expects a JSON object; no "decision" means "allow the stop"
-        return 0
 
+def on_prompt(provider, hook_event_name, raw):
+    """A submitted prompt: register it for the queue protection, route it and inject the context."""
     prompt, payload, turn_key = extract_prompt(raw, provider)
     if prompt is None:
         if payload is None:
             log({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "error": "stdin: not a JSON object",
                  "stdin_head": redact(raw[:80].decode("utf-8", "replace"))})
-        return 0
+        return
     low = prompt.lstrip().lower()
-    if len(prompt) < 3 or low.startswith("/") or low.startswith(SYSTEM_PREFIXES):
-        return 0  # a command or a harness message, not a user request
+    if len(prompt) < 3 or low.startswith(("/",) + SYSTEM_PREFIXES):
+        return  # a command or a harness message, not a user request
     if provider == "antigravity" and turn_key and not _first_time(turn_key):
-        return 0  # same user turn, later model call
+        return  # same user turn, later model call
 
     cwd = (payload.get("cwd") or (payload.get("workspacePaths") or [""])[0]) if payload else ""
     private = any(t in low for t in SKIP_TAGS)
     queue_text = queue_state.render(queue_state.on_submit(
         core.STATE_DIR, provider, _session_id(payload), cwd, "" if private else redact(" ".join(prompt.split())[:60]),
         last_activity=_transcript_mtime(payload)))
-    if private:  # #norouter / #privat: no routing, never sent to TypeSafe - only the queue protection
-        if queue_text:
-            emit(queue_text, hook_event_name, provider)
-        return 0
+    if not private:
+        emit(route_and_log(prompt, provider, payload, cwd, queue_text), hook_event_name, provider)
+    elif queue_text:  # #norouter / #privat: no routing, never sent to TypeSafe - only the queue protection
+        emit(queue_text, hook_event_name, provider)
 
+
+def route_and_log(prompt, provider, payload, cwd, queue_text):
+    """The context to inject for a prompt; the decision is logged (redacted). Never raises."""
     t0 = time.perf_counter()
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "cwd": cwd,
              "sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
@@ -199,16 +199,31 @@ def main(argv=None):
         entry["error"] = f"{type(exc).__name__}: {exc}"[:200]
         entry["latency_ms"] = int((time.perf_counter() - t0) * 1000)
         log(entry)
-        emit("[router] unavailable; answer directly in this session."
-             + (" SAFETY: ask for explicit confirmation before any irreversible action." if core.is_destructive(prompt) else "")
-             + " " + core.lang.respond_line(core.lang.detect(prompt)), hook_event_name, provider)
-        return 0
+        return ("[router] unavailable; answer directly in this session."
+                + (" SAFETY: ask for explicit confirmation before any irreversible action." if core.is_destructive(prompt) else "")
+                + " " + core.lang.respond_line(core.lang.detect(prompt)))
     entry.update(d)
     entry["latency_ms"] = int((time.perf_counter() - t0) * 1000)
     if queue_text:
         entry["queued"] = True
     log(entry)
-    emit(text + (" " + queue_text if queue_text else ""), hook_event_name, provider)
+    return text + (" " + queue_text if queue_text else "")
+
+
+def main(argv=None):
+    """Exit code: always 0 - the router never blocks a prompt."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    cloud_only = "--cloud-only" in args
+    args = [a for a in args if a != "--cloud-only"]
+    if len(args) != 2:
+        print("Usage: python -m jev_router.hooks <claude|codex|antigravity> <hook_event_name> [--cloud-only]", file=sys.stderr)
+    elif not cloud_only or core.is_cloud():  # locally the global (user-level) hook already runs - avoid double injection
+        provider, hook_event_name = args
+        raw = sys.stdin.buffer.read()
+        if hook_event_name == "Stop":
+            on_stop(provider, raw)
+        else:
+            on_prompt(provider, hook_event_name, raw)
     return 0
 
 

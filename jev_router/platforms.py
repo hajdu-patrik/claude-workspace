@@ -22,25 +22,30 @@ IS_MAC = sys.platform == "darwin"
 def claude_desktop_config():
     """Claude desktop app's MCP config (Chat / Cowork)."""
     if IS_WINDOWS:
-        return Path(os.environ.get("APPDATA", HOME / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json"
-    if IS_MAC:
-        return HOME / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    return Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "Claude" / "claude_desktop_config.json"
+        app_data = Path(os.environ.get("APPDATA", HOME / "AppData" / "Roaming"))
+    elif IS_MAC:
+        app_data = HOME / "Library" / "Application Support"
+    else:
+        app_data = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config"))
+    return app_data / "Claude" / "claude_desktop_config.json"
 
 
+CLAUDE_HOME = HOME / ".claude"
+CODEX_HOME = HOME / ".codex"
+AGY_CONFIG = HOME / ".gemini" / "config"
 PATHS = {
-    "claude_settings": HOME / ".claude" / "settings.json",
-    "claude_skills": HOME / ".claude" / "skills",
-    "claude_agents": HOME / ".claude" / "agents",
-    "codex_home": HOME / ".codex",
-    "codex_hooks": HOME / ".codex" / "hooks.json",
-    "codex_config": HOME / ".codex" / "config.toml",
-    "codex_agents": HOME / ".codex" / "agents",
+    "claude_settings": CLAUDE_HOME / "settings.json",
+    "claude_skills": CLAUDE_HOME / "skills",
+    "claude_agents": CLAUDE_HOME / "agents",
+    "codex_home": CODEX_HOME,
+    "codex_hooks": CODEX_HOME / "hooks.json",
+    "codex_config": CODEX_HOME / "config.toml",
+    "codex_agents": CODEX_HOME / "agents",
     "codex_skills": HOME / ".agents" / "skills",          # personal skills location Codex scans
-    "agy_config": HOME / ".gemini" / "config",
-    "agy_hooks": HOME / ".gemini" / "config" / "hooks.json",
-    "agy_skills_json": HOME / ".gemini" / "config" / "skills.json",
-    "agy_mcp": HOME / ".gemini" / "config" / "mcp_config.json",
+    "agy_config": AGY_CONFIG,
+    "agy_hooks": AGY_CONFIG / "hooks.json",
+    "agy_skills_json": AGY_CONFIG / "skills.json",
+    "agy_mcp": AGY_CONFIG / "mcp_config.json",
 }
 
 
@@ -92,7 +97,7 @@ def find_exe(name):
         if IS_WINDOWS and os.environ.get("LOCALAPPDATA"):
             candidates.insert(0, Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "agy.exe")
     elif name == "claude":
-        candidates = [HOME / ".local" / "bin" / ("claude.exe" if IS_WINDOWS else "claude"), HOME / ".claude" / "local" / "claude"]
+        candidates = [HOME / ".local" / "bin" / ("claude.exe" if IS_WINDOWS else "claude"), CLAUDE_HOME / "local" / "claude"]
     for c in candidates:
         if str(c) and Path(c).is_file():
             return str(c)

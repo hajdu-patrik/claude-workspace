@@ -11,6 +11,7 @@ from pathlib import Path
 from . import platforms as P, remote
 
 HOME = P.HOME
+STATE = HOME / ".jev-router"
 
 
 def line(ok, label, detail=""):
@@ -47,20 +48,27 @@ def interpreters(claude_settings, codex_toml):
     return found
 
 
-def main():
+def report_tools():
     print("== Tools")
     for info in P.detect(deep=False).values():
         li = {True: "logged in", False: "NOT logged in", None: ""}[info["logged_in"]]
         line(info["installed"], info["label"], f"{info['version'] or 'not installed'}  {li}".strip())
 
+
+def report_hooks():
+    """Returns Claude's settings.json (the interpreter check reads its hook command)."""
     print("\n== Router hooks")
-    line((HOME / ".jev-router" / "bin" / "run_hook.py").is_file(), "hook shim", "~/.jev-router/bin/run_hook.py")
+    line((STATE / "bin" / "run_hook.py").is_file(), "hook shim", "~/.jev-router/bin/run_hook.py")
     cs, cx = jload(P.PATHS["claude_settings"]), jload(P.PATHS["codex_hooks"])
     agy = (jload(P.PATHS["agy_hooks"]) or {}).get("router", {})
     line(has_hook(cs, "UserPromptSubmit") and has_hook(cs, "Stop"), "Claude UserPromptSubmit + Stop")
     line(has_hook(cx, "UserPromptSubmit") and has_hook(cx, "Stop"), "Codex UserPromptSubmit + Stop", "(trust once: codex -> /hooks)")
     line("PreInvocation" in agy and "Stop" in agy, "Antigravity PreInvocation + Stop")
+    return cs
 
+
+def report_mcp():
+    """Returns Codex's config.toml text ('' when missing)."""
     print("\n== MCP router (hook-less modes)")
     ok = "jev-router" in json.dumps(jload(P.claude_desktop_config()) or {})
     line(ok, "Claude desktop (Chat/Cowork)", "" if ok else "missing - the app rewrites its config from memory: "
@@ -68,13 +76,20 @@ def main():
     cfg_toml = P.PATHS["codex_config"].read_text(encoding="utf-8") if P.PATHS["codex_config"].exists() else ""
     line("[mcp_servers.jev-router]" in cfg_toml, "Codex")
     line("jev-router" in json.dumps(jload(P.PATHS["agy_mcp"]) or {}), "Antigravity")
+    return cfg_toml
 
+
+def count_in(folder, test):
+    return sum(1 for p in folder.iterdir() if test(p)) if folder.is_dir() else 0
+
+
+def report_skills(cfg_toml):
     print("\n== Skill hub + agents")
     hub = HOME / ".skills"
-    n_hub = sum(1 for p in hub.iterdir() if (p / "SKILL.md").is_file()) if hub.is_dir() else 0
+    n_hub = count_in(hub, lambda p: (p / "SKILL.md").is_file())
     line(n_hub > 0, "~/.skills", f"{n_hub} skills")
     for label, base in [("Claude links", P.PATHS["claude_skills"]), ("Codex links", P.PATHS["codex_skills"])]:
-        n = sum(1 for p in base.iterdir() if P.is_link(p)) if base.is_dir() else 0
+        n = count_in(base, P.is_link)
         line(n > 0, label, f"{n} links")
     agy_skills = jload(P.PATHS["agy_skills_json"]) or {}
     line(any(e.get("path", "").endswith("/.skills") for e in agy_skills.get("entries", [])), "Antigravity skills.json")
@@ -84,35 +99,63 @@ def main():
     line(len(ca) > 0, "Claude worker agents", f"{len(ca)}")
     line("[agents." in cfg_toml, "Codex worker roles", f"{cfg_toml.count('[agents.')}")
 
+
+def report_config():
+    """Returns ~/.jev-router/config.json ({} when missing)."""
     print("\n== Configuration (~/.jev-router/config.json)")
-    cfg = jload(HOME / ".jev-router" / "config.json") or {}
+    cfg = jload(STATE / "config.json") or {}
     jev = os.environ.get("TYPESAFE_API_KEY") or cfg.get("typesafe_api_key")
     line(True, "Decision backend", "JEV (token configured)" if jev else "built-in local model (no JEV token)")
     line(True, "Remote access name", cfg.get("remote_name") or "not set up (python install.py remote)")
-    line(True, "Per-account model overrides", "yes" if (HOME / ".jev-router" / "models.local.json").exists()
+    line(True, "Per-account model overrides", "yes" if (STATE / "models.local.json").exists()
          else "no (python install.py models --probe)")
+    return cfg
 
+
+def report_interpreters(claude_settings, cfg_toml):
     print("\n== Interpreter used by hooks and MCP")
-    for label, exe in interpreters(cs, cfg_toml):
+    for label, exe in interpreters(claude_settings, cfg_toml):
         line(Path(exe).is_file(), label, exe if Path(exe).is_file() else
              f"{exe} is gone (Python updated or removed?) - re-run: python install.py --yes")
 
-    if cfg.get("remote_name"):
-        print(f"\n== Remote access \"{cfg['remote_name']}\"")
-        for tool, ok, detail in remote.status():
-            line(ok, tool, detail)
 
-    print("\n== Router activity (~/.jev-router/logs/routing.jsonl)")
-    log = HOME / ".jev-router" / "logs" / "routing.jsonl"
+def report_remote(cfg):
+    if not cfg.get("remote_name"):
+        return
+    print(f"\n== Remote access \"{cfg['remote_name']}\"")
+    for tool, ok, detail in remote.status():
+        line(ok, tool, detail)
+
+
+def last_prompts(log):
+    """{provider: timestamp of its newest routed prompt} from the last 500 log lines."""
     last = {}
-    if log.exists():
-        for raw in log.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]:
-            try:
-                e = json.loads(raw)
-            except ValueError:
-                continue
-            last[e.get("provider")] = e.get("ts")
+    if not log.exists():
+        return last
+    for raw in log.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]:
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        last[e.get("provider")] = e.get("ts")
+    return last
+
+
+def report_activity():
+    print("\n== Router activity (~/.jev-router/logs/routing.jsonl)")
+    last = last_prompts(STATE / "logs" / "routing.jsonl")
     for p, ts in sorted(last.items()):
         line(True, f"last {p} prompt", ts)
     if not last:
         line(False, "no routed prompt logged yet")
+
+
+def main():
+    report_tools()
+    claude_settings = report_hooks()
+    cfg_toml = report_mcp()
+    report_skills(cfg_toml)
+    cfg = report_config()
+    report_interpreters(claude_settings, cfg_toml)
+    report_remote(cfg)
+    report_activity()

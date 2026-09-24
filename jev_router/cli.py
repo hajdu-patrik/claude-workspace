@@ -124,6 +124,12 @@ def save_config(cfg):
 
 
 # --- 1. detection ------------------------------------------------------------------------------------
+def report(lines, indent=""):
+    """(tool, ok, message) lines from remote.setup() / remote.remove()."""
+    for tool, ok, msg in lines:
+        say(f"{indent}[{'OK' if ok else '!!'}] {tool}: {msg}")
+
+
 def print_report(found):
     say(f"\n{'Tool':<26}{'Installed':<11}{'Logged in':<11}Version")
     for info in found.values():
@@ -195,17 +201,24 @@ def connect(providers):
 
 
 # --- 5. optional extras -----------------------------------------------------------------------------------------
+def ask_remote_name(cfg):
+    """The machine name for remote access: typed in, else the saved one, else the hostname."""
+    default = cfg.get("remote_name") or P.hostname()
+    if YES or not sys.stdin.isatty():
+        return default
+    return input(f"  Name shown on your other devices [{default}]: ").strip() or default
+
+
 def extras(providers, cfg):
     say("\n== 5/5  Optional extras")
     name = FLAGS.get("--remote")
     if name or (not YES and ask("  Set up remote access (control this computer from a phone / another device)?", "n")):
         if not isinstance(name, str):
-            default = cfg.get("remote_name") or P.hostname()
-            name = (input(f"  Name shown on your other devices [{default}]: ").strip() if sys.stdin.isatty() and not YES else "") or default
-        for tool, ok, msg in remote.setup(name, providers, apply=not DRY, workdir=remote_workdir(cfg)):
-            say(f"  [{'OK' if ok else '!!'}] {tool}: {msg}")
+            name = ask_remote_name(cfg)
+        report(remote.setup(name, providers, apply=not DRY, workdir=remote_workdir(cfg)), indent="  ")
     say("  Speech-to-text (dictation into any app): see docs/speech-to-text.md")
-    if P.IS_WINDOWS and not YES and not DRY and not P.find_exe("handy") and ask("  Install Handy (offline dictation) with winget now?", "n"):
+    offer_handy = P.IS_WINDOWS and not YES and not DRY and not P.find_exe("handy")
+    if offer_handy and ask("  Install Handy (offline dictation) with winget now?", "n"):
         os.system("winget install --id cjpais.Handy -e --accept-source-agreements --accept-package-agreements")
 
 
@@ -228,6 +241,19 @@ def next_steps(providers):
 
 
 # --- sub-commands ----------------------------------------------------------------------------------------------------
+def codex_accepts(codex, model_id):
+    """True if the account can use this Codex model (one tiny low-effort prompt)."""
+    code, out = P.run([codex, "exec", "--skip-git-repo-check", "-m", model_id, "-c", "model_reasoning_effort=low",
+                       "#norouter Reply with exactly: OK"], timeout=180)
+    low = out.lower()
+    return code == 0 and "ok" in low and "not supported" not in low and "does not exist" not in low
+
+
+def record_model(local, provider, model_id, ok):
+    local.setdefault(provider, {})[model_id] = {"selectable": ok}
+    say(f"  {model_id:<28} {'available' if ok else 'not available'}")
+
+
 def probe_models():
     """Tests every catalog model of Codex (one tiny prompt each) and reads Antigravity's model list;
     the result goes to ~/.jev-router/models.local.json and overrides models.json per account."""
@@ -236,20 +262,13 @@ def probe_models():
     if codex := P.find_exe("codex"):
         say("Codex: testing each model with a one-word prompt (about 10-60 s per model)...")
         for m in catalog["codex"]["models"]:
-            code, out = P.run([codex, "exec", "--skip-git-repo-check", "-m", m["id"], "-c", "model_reasoning_effort=low",
-                               "#norouter Reply with exactly: OK"], timeout=180)
-            low = out.lower()
-            ok = code == 0 and "ok" in low and "not supported" not in low and "does not exist" not in low
-            local.setdefault("codex", {})[m["id"]] = {"selectable": ok}
-            say(f"  {m['id']:<28} {'available' if ok else 'not available'}")
+            record_model(local, "codex", m["id"], codex_accepts(codex, m["id"]))
     if agy := P.find_exe("agy"):
-        code, out = P.run([agy, "models"], timeout=180)
+        _, out = P.run([agy, "models"], timeout=180)
         listed = {line.split()[0] for line in out.splitlines() if line.strip() and not line.startswith("Fetching")}
         for m in catalog["antigravity"]["models"]:
             slugs = {m["slug"].format(id=m["id"], effort=e) for e in (m["levels"] or [""])}
-            ok = bool(slugs & listed)
-            local.setdefault("antigravity", {})[m["id"]] = {"selectable": ok}
-            say(f"  {m['id']:<28} {'available' if ok else 'not available'}")
+            record_model(local, "antigravity", m["id"], bool(slugs & listed))
     if not DRY:
         STATE.mkdir(parents=True, exist_ok=True)
         MODELS_LOCAL.write_text(json.dumps(local, indent=2), encoding="utf-8")
@@ -279,6 +298,17 @@ ROUTE_KEYS = ("provider", "model", "effort", "agent", "tier", "task", "difficult
               "skill", "verify", "lang", "backend", "text", "note")
 
 
+def provider_option(argv, i):
+    """(provider, index of its last argument) for `--provider X` or `--provider=X` at argv[i]."""
+    _, eq, provider = argv[i].partition("=")
+    if not eq:
+        i += 1
+        provider = argv[i] if i < len(argv) else ""
+    if provider not in ROUTE_PROVIDERS:
+        raise ValueError(f"--provider must be one of: {', '.join(ROUTE_PROVIDERS)}")
+    return provider, i
+
+
 def parse_route_args(argv):
     """(provider, as_json, prompt text or None when none was given), or None for --help.
     Raises ValueError on a usage error; its message never echoes an option's value."""
@@ -293,12 +323,7 @@ def parse_route_args(argv):
         if a == "--json":
             as_json = True
         elif a == "--provider" or a.startswith("--provider="):
-            _, eq, provider = a.partition("=")
-            if not eq:
-                i += 1
-                provider = argv[i] if i < len(argv) else ""
-            if provider not in ROUTE_PROVIDERS:
-                raise ValueError(f"--provider must be one of: {', '.join(ROUTE_PROVIDERS)}")
+            provider, i = provider_option(argv, i)
         elif a.startswith("--"):
             raise ValueError(f"unknown option {a.partition('=')[0]}")
         else:
@@ -363,46 +388,8 @@ def run_route(argv):
     return 0
 
 
-def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["route"]:  # before configure(): the prompt text is free-form
-        return run_route(argv[1:])
-    configure(argv)
-    if COMMAND == "doctor":
-        doctor.main()
-        return 0
-    if COMMAND == "skills":
-        run_skills()
-        return 0
-    if COMMAND == "detect":
-        print_report(P.detect())
-        return 0
-    if COMMAND == "models":
-        probe_models()
-        return 0
-    if COMMAND == "remote":
-        if "--remove" in FLAGS:
-            if DRY:
-                say("Dry run: would remove the remote-access services (scheduled tasks / launchd / systemd) "
-                    "and stop the Antigravity and Codex remote daemons.")
-                return 0
-            for tool, ok, msg in remote.remove():
-                say(f"[{'OK' if ok else '!!'}] {tool}: {msg}")
-            return 0
-        found = P.detect(deep=False)
-        providers = [p for p, i in found.items() if i["installed"]]
-        cfg = load_config()
-        name = FLAGS.get("--name") if isinstance(FLAGS.get("--name"), str) else (cfg.get("remote_name") or P.hostname())
-        for tool, ok, msg in remote.setup(name, providers, apply=not DRY, workdir=remote_workdir(cfg)):
-            say(f"[{'OK' if ok else '!!'}] {tool}: {msg}")
-        return 0
-    if COMMAND == "uninstall":
-        integrations.install(ALL, apply=not DRY, uninstall=True)
-        if not DRY:
-            for tool, ok, msg in remote.remove():
-                say(f"[{'OK' if ok else '!!'}] {tool}: {msg}")
-        say("Hooks, MCP entries and remote access removed. Your skills stay in ~/.skills (and linked).")
-        return 0
+def run_setup():
+    """The interactive setup (steps 1-5). Returns the exit code."""
     say("jev-router setup" + (" (dry run - nothing will be changed)" if DRY else ""))
     providers = detect_and_login()
     if not providers:
@@ -415,3 +402,35 @@ def main(argv=None):
     extras(providers, load_config() if not DRY else cfg)
     next_steps(providers)
     return 0
+
+
+def run_remote():
+    if "--remove" in FLAGS:
+        if DRY:
+            say("Dry run: would remove the remote-access services (scheduled tasks / launchd / systemd) "
+                "and stop the Antigravity and Codex remote daemons.")
+        else:
+            report(remote.remove())
+        return
+    found = P.detect(deep=False)
+    providers = [p for p, i in found.items() if i["installed"]]
+    cfg = load_config()
+    name = FLAGS.get("--name") if isinstance(FLAGS.get("--name"), str) else (cfg.get("remote_name") or P.hostname())
+    report(remote.setup(name, providers, apply=not DRY, workdir=remote_workdir(cfg)))
+
+
+def run_uninstall():
+    integrations.install(ALL, apply=not DRY, uninstall=True)
+    if not DRY:
+        report(remote.remove())
+    say("Hooks, MCP entries and remote access removed. Your skills stay in ~/.skills (and linked).")
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["route"]:  # before configure(): the prompt text is free-form
+        return run_route(argv[1:])
+    configure(argv)
+    commands = {"setup": run_setup, "doctor": doctor.main, "skills": run_skills, "models": probe_models,
+                "detect": lambda: print_report(P.detect()), "remote": run_remote, "uninstall": run_uninstall}
+    return commands[COMMAND]() or 0  # the sub-commands return None (success) or an exit code

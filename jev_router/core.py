@@ -366,28 +366,49 @@ def classify(prompt, skills=None, backend=None, effort=None, models=None):
     never trusting the model-based answer alone for a hard constraint."""
     candidates = skills or []
     if use_jev(backend):
-        result = ask_jev(prompt, build_questions({s["name"]: s["description"][:300] for _, s in candidates}, effort, models))
-        answers = result["answers"]
-        answers["_backend"] = "jev"
-        answers["_jev_model"] = result.get("model")
+        answers = _jev_answers(prompt, candidates, effort, models)
     else:
-        answers = local_answers(prompt)
-        answers["_backend"] = "local"
-        picked = local_skill_answer(candidates)
-        if picked:
-            answers["skill"] = {"choice": picked[0], "confidence": picked[1]}
-            answers[safe_key(picked[0])] = {"noul": 0.8}
-        if effort and effort.get("levels"):
-            usable = [l for l in effort["levels"] if l not in set(effort.get("excluded", []))]
-            if usable:
-                lvl = float(answers["difficulty"]["score"])
-                # 0 -> lowest, 1 -> middle, 2 -> second-highest: the mock never picks the very top
-                # level (max/ultra) on its own - that is left to JEV or an explicit override.
-                idx = round(lvl / 2 * (len(usable) - 1) * 0.8) if len(usable) > 1 else 0
-                answers["effort"] = {"choice": usable[max(0, min(idx, len(usable) - 1))], "confidence": 0.5}
+        answers = _mock_answers(prompt, candidates, effort)
+    return _enforce_policy(answers, effort, models)
 
-    # Hard policy, never trusting the model-based answer alone: an excluded level ('ultra') becomes
-    # the highest allowed one, and a model JEV invented (or one not selectable) is dropped.
+
+def _jev_answers(prompt, candidates, effort, models):
+    result = ask_jev(prompt, build_questions({s["name"]: s["description"][:300] for _, s in candidates}, effort, models))
+    answers = result["answers"]
+    answers["_backend"] = "jev"
+    answers["_jev_model"] = result.get("model")
+    return answers
+
+
+def _mock_answers(prompt, candidates, effort):
+    """The local mock: keyword answers + the pre-filter's clear skill winner + an effort from difficulty."""
+    answers = local_answers(prompt)
+    answers["_backend"] = "local"
+    picked = local_skill_answer(candidates)
+    if picked:
+        answers["skill"] = {"choice": picked[0], "confidence": picked[1]}
+        answers[safe_key(picked[0])] = {"noul": 0.8}
+    choice = _mock_effort(float(answers["difficulty"]["score"]), effort)
+    if choice:
+        answers["effort"] = {"choice": choice, "confidence": 0.5}
+    return answers
+
+
+def _mock_effort(lvl, effort):
+    """0 -> lowest, 1 -> middle, 2 -> second-highest: the mock never picks the very top level
+    (max/ultra) on its own - that is left to JEV or an explicit override. None without levels."""
+    if not effort or not effort.get("levels"):
+        return None
+    usable = [l for l in effort["levels"] if l not in set(effort.get("excluded", []))]
+    if not usable:
+        return None
+    idx = round(lvl / 2 * (len(usable) - 1) * 0.8) if len(usable) > 1 else 0
+    return usable[max(0, min(idx, len(usable) - 1))]
+
+
+def _enforce_policy(answers, effort, models):
+    """Hard policy, never trusting the model-based answer alone: an excluded level ('ultra') becomes
+    the highest allowed one, and a model JEV invented (or one not selectable) is dropped."""
     banned = excluded_efforts()
     if answers.get("effort", {}).get("choice") in banned:
         usable = [l for l in (effort or {}).get("levels", EFFORT_ORDER) if l not in banned]
@@ -483,26 +504,40 @@ def resolve_tier(d, targets, models=None, session_model=None):
     used with that model instead. Effort: clamped to the model's real levels (models.json); the
     local mock is additionally kept inside the tier's own 'efforts' range. Placeholders in
     agent/text: {model}, {model_} (dots -> '_', TOML-safe role names), {effort}, {slug}, {agent}."""
-    tiers = targets.get("tiers", {})
-    spec = tiers.get(d["primary"]) or tiers.get("main") or "Answer directly in this session."
-    chosen = d.get("model")
-    if chosen and targets.get("model_pick") and d["primary"] in targets.get("model_pick_tiers", []):
-        spec = dict(targets["model_pick"], model=chosen)
+    spec = _tier_spec(d, targets)
     if isinstance(spec, str):
         return spec, d.get("effort"), None, None
     model = spec.get("model", "")
     mdef = (models or {}).get(model)
-    effort = d.get("effort")
-    if spec.get("efforts") and not (chosen and d.get("backend") == "jev"):
-        effort = clamp_effort(effort, spec["efforts"])
-    if mdef is not None:
-        effort = clamp_effort(effort, mdef["levels"]) if mdef["levels"] else None
+    effort = _tier_effort(d, spec, mdef)
     slug = ((mdef or {}).get("slug") or spec.get("slug") or "{id}").format(id=model, effort=effort or "")
     fields = {"model": model, "model_": model.replace(".", "_"), "effort": effort or "default", "slug": slug}
     fields["agent"] = spec.get("agent", "").format(**fields)
-    template = spec.get("same_model_text") if session_model and session_model == model and spec.get("same_model_text") else spec.get("text", "")
+    same_model = session_model and session_model == model and spec.get("same_model_text")
+    template = spec["same_model_text"] if same_model else spec.get("text", "")
     agent = fields["agent"] if fields["agent"] and "{agent}" in template else None
     return template.format(**fields), effort, model, agent
+
+
+def _tier_spec(d, targets):
+    """The decided tier's spec from targets.json - targets['model_pick'] with JEV's model when JEV
+    picked one for a tier listed in targets['model_pick_tiers']."""
+    tiers = targets.get("tiers", {})
+    chosen = d.get("model")
+    if chosen and targets.get("model_pick") and d["primary"] in targets.get("model_pick_tiers", []):
+        return dict(targets["model_pick"], model=chosen)
+    return tiers.get(d["primary"]) or tiers.get("main") or "Answer directly in this session."
+
+
+def _tier_effort(d, spec, mdef):
+    """The decided effort clamped to the tier's range (not for JEV's own model pick) and then to
+    the model's real levels; None for a model without effort levels."""
+    effort = d.get("effort")
+    if spec.get("efforts") and not (d.get("model") and d.get("backend") == "jev"):
+        effort = clamp_effort(effort, spec["efforts"])
+    if mdef is not None:
+        effort = clamp_effort(effort, mdef["levels"]) if mdef["levels"] else None
+    return effort
 
 
 def render(d, destructive_hit, targets, provider="claude", lang_code="hu", models=None, session_model=None):

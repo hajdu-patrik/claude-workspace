@@ -123,19 +123,26 @@ def claude_codex_hooks(path, provider, w, uninstall=False):
     w.write(path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", f"{provider} hooks")
 
 
+AGY_EVENTS = ("PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop")
+
+
+def _strip_router_events(spec):
+    """Removes our commands from one Antigravity hook group (in place)."""
+    for event in ("PreInvocation", "Stop"):
+        if event in spec:
+            spec[event] = [h for h in spec[event] if not is_router_cmd(h.get("command"))]
+            if not spec[event]:
+                del spec[event]
+
+
 def antigravity_hooks(path, w, uninstall=False):
     cfg = load(path)
-    for name in list(cfg):
-        spec = cfg[name]
-        if not isinstance(spec, dict):
-            continue
-        for event in ("PreInvocation", "Stop"):
-            if event in spec:
-                spec[event] = [h for h in spec[event] if not is_router_cmd(h.get("command"))]
-                if not spec[event]:
-                    del spec[event]
-        if not any(k in spec for k in ("PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "Stop")):
-            del cfg[name]
+    for spec in cfg.values():
+        if isinstance(spec, dict):
+            _strip_router_events(spec)
+    # a hook group left without any event is dropped
+    cfg = {name: spec for name, spec in cfg.items()
+           if not isinstance(spec, dict) or any(k in spec for k in AGY_EVENTS)}
     if not uninstall:
         cfg["router"] = {e: [{"type": "command", "command": hook_cmd("antigravity", e), "timeout": 10}]
                          for e in ("PreInvocation", "Stop")}
@@ -155,8 +162,9 @@ def json_mcp(path, label, w, uninstall=False):
 
 def codex_mcp(path, w, uninstall=False):
     text = Path(path).read_text(encoding="utf-8") if Path(path).exists() else ""
-    # the section ends at the next table OR comment line (our generated agents block starts with one)
-    pat = re.compile(r"\[mcp_servers\.jev-router\]\n(?:(?![\[#]).*\n?)*", re.M)
+    # the section ends at the next table OR comment line (our generated agents block starts with one);
+    # each repetition consumes exactly one line: a blank one, or one not starting with [ or #
+    pat = re.compile(r"\[mcp_servers\.jev-router\]\n(?:\n|[^\[#\n].*(?:\n|\Z))*")
     block = f'[mcp_servers.jev-router]\ncommand = {json.dumps(fwd(P.python_exe_windowless()))}\nargs = [{json.dumps(fwd(SHIM_MCP))}]\n\n'
     m = pat.search(text)
     if uninstall:

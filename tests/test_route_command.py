@@ -54,16 +54,24 @@ def one_json(out):
 ])
 def test_json_shape_and_types(monkeypatch, capsys, provider, prompt, model, agent, tier):
     code, out, err = route(monkeypatch, capsys, "--provider", provider, "--json", prompt)
-    assert code == 0 and err == ""
+    assert code == 0
+    assert err == ""
     r = one_json(out)
     assert set(TYPES) <= set(r)
     for key, typ in TYPES.items():
         assert isinstance(r[key], typ), (key, r[key])
-    assert type(r["difficulty"]) is int and type(r["extra_agents"]) is int  # not bool
-    assert r["provider"] == provider and r["model"] == model and r["tier"] == tier and r["backend"] == "local"
-    assert r["text"].startswith("[router]") and r["lang"] == "en" and r["note"] is None
+    assert type(r["difficulty"]) is int
+    assert type(r["extra_agents"]) is int  # not bool
+    assert r["provider"] == provider
+    assert r["model"] == model
+    assert r["tier"] == tier
+    assert r["backend"] == "local"
+    assert r["text"].startswith("[router]")
+    assert r["lang"] == "en"
+    assert r["note"] is None
     if agent:
-        assert r["agent"] == f"{agent}{r['effort']}" and f"`{r['agent']}`" in r["text"]
+        assert r["agent"] == f"{agent}{r['effort']}"
+        assert f"`{r['agent']}`" in r["text"]
     else:
         assert r["agent"] is None
 
@@ -72,14 +80,17 @@ def test_text_mode_prints_only_the_rendered_text(monkeypatch, capsys):
     _, out, _ = route(monkeypatch, capsys, "--json", "Write unit tests for the parser")
     text = one_json(out)["text"]
     code, out, _ = route(monkeypatch, capsys, "Write", "unit", "tests", "for", "the", "parser")  # words are joined
-    assert code == 0 and out == text + "\n"
+    assert code == 0
+    assert out == text + "\n"
 
 
 def test_stdin_input(monkeypatch, capsys):
     _, expected, _ = route(monkeypatch, capsys, "--json", "Írj pytest teszteket a parser modulhoz")
     code, out, _ = route(monkeypatch, capsys, "--json", stdin="﻿Írj pytest teszteket a parser modulhoz\n".encode("utf-8"))
-    assert code == 0 and one_json(out) == one_json(expected)
-    assert one_json(out)["lang"] == "hu" and one_json(out)["task"] == "test"
+    assert code == 0
+    assert one_json(out) == one_json(expected)
+    assert one_json(out)["lang"] == "hu"
+    assert one_json(out)["task"] == "test"
 
 
 @pytest.mark.parametrize("argv,stdin", [
@@ -92,13 +103,17 @@ def test_stdin_input(monkeypatch, capsys):
 ])
 def test_usage_errors_exit_2(monkeypatch, capsys, argv, stdin):
     code, out, err = route(monkeypatch, capsys, *argv, stdin=stdin)
-    assert code == 2 and out == "" and "usage:" in err and "secret-value" not in err
+    assert code == 2
+    assert out == ""
+    assert "usage:" in err
+    assert "secret-value" not in err
 
 
 def test_route_must_be_the_first_argument(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--yes", "route", "hi"])
-    assert exc.value.code == 2 and "first argument" in capsys.readouterr().err
+    assert exc.value.code == 2
+    assert "first argument" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("prompt", ["#norouter delete all files in the temp folder", "#privat titkos terv"])
@@ -109,8 +124,13 @@ def test_norouter_is_not_routed(monkeypatch, capsys, prompt):
     monkeypatch.setattr(core, "ask_jev", never)
     code, out, _ = route(monkeypatch, capsys, "--json", prompt)
     r = one_json(out)
-    assert code == 0 and r["model"] is None and r["agent"] is None and r["tier"] is None and r["text"] == ""
-    assert "#norouter" in r["note"] and r["destructive"] is ("delete" in prompt)
+    assert code == 0
+    assert r["model"] is None
+    assert r["agent"] is None
+    assert r["tier"] is None
+    assert r["text"] == ""
+    assert "#norouter" in r["note"]
+    assert r["destructive"] is ("delete" in prompt)
     assert route(monkeypatch, capsys, prompt)[1] == ""  # text mode: nothing to inject, like the hooks
 
 
@@ -129,7 +149,9 @@ def test_unexpected_error_exit_1_prints_only_the_type(monkeypatch, capsys):
         raise RuntimeError("details that could hold a secret")
     monkeypatch.setattr(core, "route", boom)
     code, out, err = route(monkeypatch, capsys, "--json", "Write unit tests")
-    assert code == 1 and out == "" and err == "RuntimeError\n"
+    assert code == 1
+    assert out == ""
+    assert err == "RuntimeError\n"
 
 
 def test_jev_fallback_never_prints_the_token_or_error_text(monkeypatch, capsys):
@@ -141,8 +163,11 @@ def test_jev_fallback_never_prints_the_token_or_error_text(monkeypatch, capsys):
     monkeypatch.setattr(core, "ask_jev", down)
     code, out, err = route(monkeypatch, capsys, "--json", "Write unit tests for the parser")
     r = one_json(out)
-    assert code == 0 and r["backend"] == "local" and r["note"].startswith("JEV unavailable (TimeoutError)")
-    assert "tok-do-not-print" not in out + err and "jev down" not in out + err
+    assert code == 0
+    assert r["backend"] == "local"
+    assert r["note"].startswith("JEV unavailable (TimeoutError)")
+    assert "tok-do-not-print" not in out + err
+    assert "jev down" not in out + err
 
 
 # --- bin/route.py shim --------------------------------------------------------------------------------
@@ -156,10 +181,12 @@ def test_route_shim_dry_run_idempotent_and_runnable(tmp_path, monkeypatch):
         f'sys.path.insert(0, r"{integrations.REPO}")\nrunpy.run_module("jev_router.hooks", run_name="__main__", alter_sys=True)\n')
     dry = integrations.Writer(apply=False)
     integrations.install_shims(dry)
-    assert dry.changes == 3 and not bin_dir.exists()                 # dry run writes nothing
+    assert dry.changes == 3
+    assert not bin_dir.exists()                                       # dry run writes nothing
     w = integrations.Writer(apply=True)
     integrations.install_shims(w)
-    assert w.changes == 3 and 'sys.argv[1:1] = ["route"]' in (bin_dir / "route.py").read_text(encoding="utf-8")
+    assert w.changes == 3
+    assert 'sys.argv[1:1] = ["route"]' in (bin_dir / "route.py").read_text(encoding="utf-8")
     again = integrations.Writer(apply=True)
     integrations.install_shims(again)
     assert again.changes == 0                                         # idempotent

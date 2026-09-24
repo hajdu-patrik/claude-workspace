@@ -24,7 +24,7 @@ EN_WORDS = {
     "can", "could", "would", "should", "my", "your", "a", "an", "be", "do", "does", "from", "into",
     "run", "test", "tests", "code", "function", "file", "files", "about", "which", "who",
     "solve", "prove", "calculate", "compute", "find", "summarize", "translate", "delete", "send", "add",
-    "implement", "review", "design", "plan", "help", "me", "all", "by", "at", "as", "not", "why", "does",
+    "implement", "review", "design", "plan", "help", "me", "all", "by", "at", "as", "not",
 }
 _WORD_RE = re.compile(r"[a-záéíóöőúüű]+", re.I)
 

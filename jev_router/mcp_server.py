@@ -54,7 +54,7 @@ def tool_route_prompt(args):
     provider = args.get("provider") or "claude-chat"
     if not prompt:
         return "Empty prompt - nothing to route.", True
-    d, text, hit, error = core.route(prompt, provider)
+    d, text, _, error = core.route(prompt, provider)
     out = [text, "", "Decision: " + json.dumps({k: d.get(k) for k in
            ("task", "level", "primary", "effort", "skill", "lang", "backend", "skill_candidates")}, ensure_ascii=False)]
     if error:
@@ -107,7 +107,7 @@ def handle(msg):
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": f"unknown tool {params.get('name')}"}}
         try:
             text, is_error = fn(params.get("arguments") or {})
-        except Exception as exc:  # noqa: BLE001 - report, never crash the server
+        except Exception as exc:  # noqa: BLE001 - reported to the client; the server never crashes
             text, is_error = f"{type(exc).__name__}: {exc}", True
         result = {"content": [{"type": "text", "text": text}], "isError": is_error}
     else:
@@ -115,21 +115,22 @@ def handle(msg):
     return {"jsonrpc": "2.0", "id": mid, "result": result}
 
 
+def respond(line):
+    """The reply to one input line: a response dict, a list for a batch, or None / [] for nothing."""
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+    if isinstance(msg, list):
+        return [r for r in (handle(m) for m in msg if isinstance(m, dict)) if r]
+    return handle(msg) if isinstance(msg, dict) else None
+
+
 def main():
     stdin = open(sys.stdin.fileno(), "r", encoding="utf-8", errors="replace", newline="\n", closefd=False)
     stdout = open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)
     for line in stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
-        else:
-            batch = msg if isinstance(msg, list) else [msg]
-            resp = [r for r in (handle(m) for m in batch if isinstance(m, dict)) if r]
-            resp = (resp if isinstance(msg, list) else (resp[0] if resp else None))
+        resp = respond(line) if line.strip() else None
         if resp:
             stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
             stdout.flush()

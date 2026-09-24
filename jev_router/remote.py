@@ -29,15 +29,16 @@ from pathlib import Path
 
 from . import platforms as P
 
-BIN = P.HOME / ".jev-router" / "bin"
+STATE = P.HOME / ".jev-router"
+BIN = STATE / "bin"
 RUN_KEY = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 AGY_RUN_VALUE, TASK_ONCE = "AntigravityCliDaemon", "JevRouter-Setup"
-CONFIG = P.HOME / ".jev-router" / "config.json"
+CONFIG = STATE / "config.json"
 TASK_CLAUDE, TASK_CODEX, TASK_WATCHDOG = "JevRouter-ClaudeRemote", "JevRouter-CodexRemote", "JevRouter-Watchdog"
 LEGACY_TASKS = ("ClaudeRemoteControl", "ChatGPTAutostart", "CodexRemoteControl", "JevRouter-ChatGPT")
 LAUNCHD_LABEL = "com.jev-router.claude-remote"
 LAUNCHD = P.HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
-LOG = P.HOME / ".jev-router" / "logs" / "claude-remote.log"
+LOG = STATE / "logs" / "claude-remote.log"
 SYSTEMD = P.HOME / ".config" / "systemd" / "user" / "jev-router-claude-remote.service"
 
 
@@ -73,7 +74,7 @@ def _run_once(script, wait_s=30):
     Claude desktop app - and every process started from it only see the app's private copy of HKCU,
     so a Run entry written there never takes effect at logon. Scheduled tasks run outside it.
     The result goes through a file: conhost does not pass the exit code on."""
-    result = P.HOME / ".jev-router" / "state" / "setup-task.txt"
+    result = STATE / "state" / "setup-task.txt"
     result.parent.mkdir(parents=True, exist_ok=True)
     result.unlink(missing_ok=True)
     literal = str(result).replace("'", "''")
@@ -270,40 +271,64 @@ def _setup_claude(name, claude, workdir):
     return code == 0, out
 
 
+def _remote_claude(name, workdir):
+    """(tool, ok, message) for Claude Remote Control, None when Claude Code is not installed."""
+    claude = P.find_exe("claude")
+    if not claude:
+        return None
+    if not claude_trusts(workdir):
+        return ("claude", False, f"{workdir} is not a trusted Claude Code folder: run `claude` there once, "
+                                 "accept the trust dialog, then re-run `python install.py remote`")
+    ok, out = _setup_claude(name, claude, workdir)
+    return ("claude", ok, f"Remote Control server \"{name}\" (sessions start in {workdir})" if ok else out[:200])
+
+
+def _remote_agy(name):
+    """(tool, ok, message) for the Antigravity daemon, None when agy is not installed."""
+    agy = P.find_exe("agy")
+    if not agy:
+        return None
+    if P.IS_WINDOWS:
+        ok, msg = _setup_agy_windows(agy, name)
+        return ("antigravity", ok, msg[:200])
+    P.run([agy, "remote-control", "stop"], timeout=60)
+    code, out = P.run([agy, "remote-control", "start", "--name", name, "--session"], timeout=120)
+    return ("antigravity", code == 0, f"daemon \"{name}\" (antigravity.google.com)" if code == 0 else out[:200])
+
+
+def _remote_codex(workdir):
+    """(tool, ok, message) for Codex remote control, None when Codex is not installed."""
+    codex = P.find_exe("codex")
+    if not codex:
+        return None
+    if P.IS_WINDOWS:
+        # one remote connection per computer: while the ChatGPT app holds it, this one retries
+        code, out = _win_loop(TASK_CODEX, "codex-remote.cmd", workdir,
+                              f'call "{codex}" app-server --remote-control --listen off',
+                              '$_.Name -in "codex.exe", "node.exe" -and $_.CommandLine -match "app-server --remote-control"')
+        done = ("remote app server runs hidden from logon; pair once: ChatGPT app > Settings > "
+                "Connections > Control this PC, or `codex remote-control pair`")
+    else:
+        code, out = P.run([codex, "remote-control", "start"], timeout=120)
+        done = "daemon started; pair a phone: codex remote-control pair"
+    return ("codex", code == 0, done if code == 0 else out[:200])
+
+
 def setup(name, providers, apply=True, workdir=None):
     """Returns a list of (tool, ok, message) lines for the report. `workdir`: the folder remote
     Claude sessions start in - it must be a folder Claude Code trusts (never the home directory)."""
-    report = []
     workdir = workdir or P.HOME
     if not apply:
         return [(p, True, f"would set up remote access as \"{name}\"") for p in providers]
     save_name(name, workdir)
-    if "claude" in providers and (claude := P.find_exe("claude")):
-        if not claude_trusts(workdir):
-            report.append(("claude", False, f"{workdir} is not a trusted Claude Code folder: run `claude` there once, "
-                                            "accept the trust dialog, then re-run `python install.py remote`"))
-        else:
-            ok, out = _setup_claude(name, claude, workdir)
-            report.append(("claude", ok, f"Remote Control server \"{name}\" (sessions start in {workdir})" if ok else out[:200]))
-    if "antigravity" in providers and (agy := P.find_exe("agy")):
-        if P.IS_WINDOWS:
-            ok, msg = _setup_agy_windows(agy, name)
-            report.append(("antigravity", ok, msg[:200]))
-        else:
-            P.run([agy, "remote-control", "stop"], timeout=60)
-            code, out = P.run([agy, "remote-control", "start", "--name", name, "--session"], timeout=120)
-            report.append(("antigravity", code == 0, f"daemon \"{name}\" (antigravity.google.com)" if code == 0 else out[:200]))
+    report = []
+    if "claude" in providers:
+        report.append(_remote_claude(name, workdir))
+    if "antigravity" in providers:
+        report.append(_remote_agy(name))
     if "codex" in providers:
-        if P.IS_WINDOWS and (codex := P.find_exe("codex")):
-            # one remote connection per computer: while the ChatGPT app holds it, this one retries
-            code, out = _win_loop(TASK_CODEX, "codex-remote.cmd", workdir,
-                                  f'call "{codex}" app-server --remote-control --listen off',
-                                  '$_.Name -in "codex.exe", "node.exe" -and $_.CommandLine -match "app-server --remote-control"')
-            report.append(("codex", code == 0, "remote app server runs hidden from logon; pair once: ChatGPT app > Settings > "
-                                               "Connections > Control this PC, or `codex remote-control pair`" if code == 0 else out[:200]))
-        elif not P.IS_WINDOWS and (codex := P.find_exe("codex")):
-            code, out = P.run([codex, "remote-control", "start"], timeout=120)
-            report.append(("codex", code == 0, "daemon started; pair a phone: codex remote-control pair" if code == 0 else out[:200]))
+        report.append(_remote_codex(workdir))
+    report = [line for line in report if line]  # None: the tool is not installed
     if P.IS_WINDOWS and any(ok for _, ok, _ in report):
         code, out = _setup_watchdog()
         report.append(("watchdog", code == 0, "checks every 30 min and at logon that everything runs, windowless"
@@ -339,36 +364,57 @@ def codex_connection(minutes=30):
 def status():
     """Read-only (tool, ok, detail) lines for `doctor`. On Windows the real autostart entry is read
     through a short-lived scheduled task (a terminal inside a packaged app only sees a private copy)."""
-    lines = []
     if not P.IS_WINDOWS:
         service = LAUNCHD if P.IS_MAC else SYSTEMD
-        lines.append(("claude", service.exists(), str(service) if service.exists() else "not set up"))
-        return lines
-    code, out = _ps('Get-ScheduledTask -TaskName "JevRouter-*" | % { $_.TaskName + "=" + $_.State }')
-    tasks = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
-    code, out = _ps('Get-CimInstance Win32_Process | ? { $_.CommandLine -match "remote-control|app-server --remote-control" } '
-                    '| % { $_.Name + "|" + $_.CommandLine }')
+        return [("claude", service.exists(), str(service) if service.exists() else "not set up")]
+    _, out = _ps('Get-ScheduledTask -TaskName "JevRouter-*" | % { $_.TaskName + "=" + $_.State }')
+    tasks = {task: state for task, sep, state in (l.partition("=") for l in out.splitlines()) if sep}
+    _, out = _ps('Get-CimInstance Win32_Process | ? { $_.CommandLine -match "remote-control|app-server --remote-control" } '
+                 '| % { $_.Name + "|" + $_.CommandLine }')
     procs = out.lower()
-    for tool, task, marker in (("claude", TASK_CLAUDE, " remote-control --name"), ("codex", TASK_CODEX, "app-server --remote-control")):
-        if task in tasks:
-            running = tasks[task] == "Running" and marker in procs
-            lines.append((tool, running, f"task {task}: {tasks[task]}, server {'running' if marker in procs else 'NOT running'}"))
+    lines = _server_status(tasks, procs)
     if TASK_CODEX in tasks:
-        codex = P.find_exe("codex")
-        flag = codex and P.run([codex, "app-server", "--remote-control", "--listen", "off", "--help"], timeout=60)[0] == 0
-        lines.append(("codex", bool(flag), "`app-server --remote-control` supported" if flag else
-                      "this Codex version no longer accepts `app-server --remote-control` - see docs/remote-access.md"))
-        conn = codex_connection()
-        lines.append(("codex", conn[0], f"remote connection: {conn[1]}") if conn else
-                     ("codex", False, "no remote-control activity in the Codex log in the last 30 minutes"))
+        lines += _codex_status()
     if P.find_exe("agy"):
-        entry = _run_once(f"(Get-ItemProperty {_psq(RUN_KEY)} -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}")
-        serve = "remote-control serve" in procs
-        lines.append(("antigravity", bool(entry) and "--headless" in entry and serve,
-                      f"daemon {'running' if serve else 'NOT running'}, autostart "
-                      + ("hidden" if "--headless" in entry else "opens a window" if entry else "not registered")))
+        lines.append(_agy_status(procs))
     lines.append(("watchdog", TASK_WATCHDOG in tasks, f"task {TASK_WATCHDOG}: {tasks.get(TASK_WATCHDOG, 'missing')}"))
     return lines
+
+
+def _server_status(tasks, procs):
+    """Claude / Codex: the scheduled task's state and whether its server process runs."""
+    lines = []
+    for tool, task, marker in (("claude", TASK_CLAUDE, " remote-control --name"), ("codex", TASK_CODEX, "app-server --remote-control")):
+        if task in tasks:
+            server = marker in procs
+            lines.append((tool, tasks[task] == "Running" and server,
+                          f"task {task}: {tasks[task]}, server {'running' if server else 'NOT running'}"))
+    return lines
+
+
+def _codex_status():
+    """Whether this Codex version still accepts the flags the task uses, and the remote connection."""
+    codex = P.find_exe("codex")
+    flag = codex and P.run([codex, "app-server", "--remote-control", "--listen", "off", "--help"], timeout=60)[0] == 0
+    conn = codex_connection()
+    return [("codex", bool(flag), "`app-server --remote-control` supported" if flag else
+             "this Codex version no longer accepts `app-server --remote-control` - see docs/remote-access.md"),
+            ("codex", conn[0], f"remote connection: {conn[1]}") if conn else
+            ("codex", False, "no remote-control activity in the Codex log in the last 30 minutes")]
+
+
+def _autostart_state(entry):
+    if not entry:
+        return "not registered"
+    return "hidden" if "--headless" in entry else "opens a window"
+
+
+def _agy_status(procs):
+    """The Antigravity daemon and its autostart entry (read outside any MSIX container)."""
+    entry = _run_once(f"(Get-ItemProperty {_psq(RUN_KEY)} -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}")
+    serve = "remote-control serve" in procs
+    return ("antigravity", bool(entry) and "--headless" in entry and serve,
+            f"daemon {'running' if serve else 'NOT running'}, autostart {_autostart_state(entry)}")
 
 
 def remove():
