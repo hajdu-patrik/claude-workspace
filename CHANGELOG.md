@@ -41,6 +41,8 @@ dates are ISO 8601.
 - Windows: registry changes and the Antigravity setup run in a one-shot scheduled task, so they take
   effect even when the installer runs in a terminal of a packaged (MSIX) app such as the Claude
   desktop app, where HKCU writes only land in the app's private copy.
+- Tests no longer depend on the user's `ROUTER_*` environment variables (a local
+  `ROUTER_MIN_CONFIDENCE` made the `route` tests pass locally and fail in CI).
 - Windows: the Antigravity daemon started by the installer is restarted from its (hidden)
   autostart entry – started detached it had no console, so every hook or MCP server it ran
   opened a terminal window.
