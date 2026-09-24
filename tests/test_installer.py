@@ -1,6 +1,7 @@
 """Tests for the queue protection, user config and the cross-platform installer pieces."""
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -125,6 +126,18 @@ def test_install_hooks_idempotent_and_uninstall(tmp_path, monkeypatch):
     assert s["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "other"}]}]
     assert "UserPromptSubmit" not in s["hooks"]
     assert "jev-router" not in paths["codex_config"].read_text()
+
+
+def test_null_device_stdin_is_not_a_terminal(monkeypatch):
+    """Windows: isatty() is True for NUL (`< NUL`, Git Bash's `< /dev/null`), so an unattended run
+    waited forever at the first question. The null device never counts as a terminal."""
+    from jev_router import cli
+    with open(os.devnull, encoding="utf-8") as nul:
+        assert not P.is_terminal(nul)
+        monkeypatch.setattr(sys, "stdin", nul)
+        monkeypatch.setattr(cli, "YES", False)
+        assert cli.ask("Move them now?", "y") is False
+        assert cli.ask_remote_name({"remote_name": "box"}) == "box"
 
 
 def test_python_cmd_has_no_spaces():

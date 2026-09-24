@@ -46,6 +46,9 @@ dates are ISO 8601.
 - Windows: the Antigravity daemon started by the installer is restarted from its (hidden)
   autostart entry – started detached it had no console, so every hook or MCP server it ran
   opened a terminal window.
+- Windows: an unattended installer run with stdin from the null device (`< NUL`, Git Bash's
+  `< /dev/null`) waited forever at the JEV token question – `isatty()` is True for NUL. Questions
+  are now asked only on a real console; everywhere else the defaults apply.
 - Skill catalog: a SKILL.md whose `description:` value starts on the next (indented) line is indexed
   with its whole description instead of only the first line, and an empty `name:` no longer takes
   the next line as the name.

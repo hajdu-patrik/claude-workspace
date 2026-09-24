@@ -120,6 +120,23 @@ def short_path(p):
     return p
 
 
+def is_terminal(stream):
+    """True only for an interactive console. On Windows isatty() is also True for the NUL device
+    (`< NUL`, Git Bash's `< /dev/null`), where waiting for input would hang forever: there the
+    handle must also be a real console (GetConsoleMode succeeds)."""
+    try:
+        if stream is None or not stream.isatty():
+            return False
+        if not IS_WINDOWS:
+            return True
+        import ctypes
+        import msvcrt
+        mode = ctypes.c_ulong()
+        return bool(ctypes.windll.kernel32.GetConsoleMode(msvcrt.get_osfhandle(stream.fileno()), ctypes.byref(mode)))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def python_exe():
     """A stable interpreter for hooks: the base interpreter when running inside a virtualenv (the
     venv may be deleted later), else sys.executable."""

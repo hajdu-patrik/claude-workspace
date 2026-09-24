@@ -93,12 +93,17 @@ def say(msg=""):
     print(msg, flush=True)
 
 
+def interactive():
+    """A person can answer questions: stdin is a real console (not a pipe, a file or NUL)."""
+    return P.is_terminal(sys.stdin)
+
+
 def ask(question, default="y"):
     """--yes accepts the default. Without a terminal (and without --yes) nothing is changed:
     every question is answered "no", so an unattended run can never move files unasked."""
     if YES:
         return default.lower().startswith("y")
-    if not sys.stdin.isatty():
+    if not interactive():
         return False
     ans = input(f"{question} [{'Y/n' if default.lower().startswith('y') else 'y/N'}] ").strip().lower()
     return (ans or default).startswith("y")
@@ -146,7 +151,7 @@ def detect_and_login():
         if not info["installed"]:
             say(f"\n  {spec['label']} is not installed - optional. Install: {spec['install']}")
             continue
-        while info["logged_in"] is False and not YES and sys.stdin.isatty():
+        while info["logged_in"] is False and not YES and interactive():
             say(f"\n  {spec['label']} is installed but NOT logged in. In another terminal run:\n      {spec['login']}")
             if input("  Press Enter when done (s = skip this tool): ").strip().lower() == "s":
                 break
@@ -170,7 +175,7 @@ def configure_jev(cfg):
         say("  Using TYPESAFE_API_KEY from the environment.")
     elif cfg.get("typesafe_api_key"):
         say("  A token is already configured.")
-    elif not YES and sys.stdin.isatty():
+    elif not YES and interactive():
         token = getpass.getpass("  JEV token (input hidden; Enter = use the built-in local model): ").strip()
         if token:
             cfg["typesafe_api_key"] = token
@@ -204,7 +209,7 @@ def connect(providers):
 def ask_remote_name(cfg):
     """The machine name for remote access: typed in, else the saved one, else the hostname."""
     default = cfg.get("remote_name") or P.hostname()
-    if YES or not sys.stdin.isatty():
+    if YES or not interactive():
         return default
     return input(f"  Name shown on your other devices [{default}]: ").strip() or default
 
@@ -336,7 +341,7 @@ def read_stdin():
     """The piped prompt ('' for an interactive terminal: never wait for typing). utf-8-sig: PowerShell
     pipes can prepend a BOM."""
     stream = sys.stdin
-    if stream is None or stream.isatty():
+    if stream is None or P.is_terminal(stream):
         return ""
     data = stream.buffer.read() if hasattr(stream, "buffer") else stream.read()
     return data.decode("utf-8-sig", errors="replace") if isinstance(data, bytes) else data
