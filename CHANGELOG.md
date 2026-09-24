@@ -5,6 +5,25 @@ dates are ISO 8601.
 
 ---
 
+## [3.1.0] – 2026-09-24 · Standard package layout
+
+### Changed
+- Code moved from the flat `router/` scripts into the `jev_router` package with relative imports:
+  `cli`, `core`, `lang`, `catalog`, `hooks`, `queue_state`, `mcp_server`, `hub`, `integrations`,
+  `platforms`, `remote`, `doctor`. Data in `jev_router/config/`, worker templates in
+  `jev_router/templates/agents/`, bundled skills in `jev_router/skills/`.
+- One CLI: `python install.py <command>` = `python -m jev_router <command>` = `jev-router <command>`
+  (after `pip install -e .`). New commands `skills` and `doctor`.
+- `pyproject.toml` (metadata, console script, pytest settings); CI installs the package.
+- Hook and MCP shims run the package modules (`jev_router.hooks`, `jev_router.mcp_server`).
+- The generated Codex agents block is recognised by its marker prefix, so marker wording changes
+  never duplicate the block; stale Antigravity `skills.json` paths are dropped.
+
+### Removed
+- Duplicate tools: `router/probe_models.py` (→ `install.py models --probe`),
+  `scripts/check_tools.py` (→ `install.py doctor`), `scripts/check_models.py` (→ `tests/test_policy.py`),
+  the modules' own `__main__` CLIs, the unused `should_skip` helper and legacy migration code.
+
 ## [3.0.1] – 2026-09-24 · Cross-platform review fixes
 
 ### Fixed

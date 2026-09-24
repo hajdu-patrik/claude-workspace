@@ -6,12 +6,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "router"))
-import core  # noqa: E402
-import install_hooks  # noqa: E402
-import platforms as P  # noqa: E402
-import queue_state  # noqa: E402
-import run_hook  # noqa: E402
+from jev_router import core, hooks as run_hook, integrations as install_hooks, platforms as P, queue_state
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +148,7 @@ def test_queue_drops_cancelled_turn(tmp_path):
 
 def test_antigravity_stop_waits_for_fully_idle(monkeypatch, capsys):
     hook(monkeypatch, capsys, "claude", "UserPromptSubmit", {"prompt": "long running work", "session_id": "g", "cwd": "/w"})
-    import queue_state as q
+    from jev_router import queue_state as q
     q.on_submit(core.STATE_DIR, "antigravity", "conv", "/x", "bg work")
     hook(monkeypatch, capsys, "antigravity", "Stop", {"conversationId": "conv", "fullyIdle": False})
     assert q.on_submit(core.STATE_DIR, "antigravity", "conv", "/x", "next")["ahead"]   # still running
@@ -162,7 +157,7 @@ def test_antigravity_stop_waits_for_fully_idle(monkeypatch, capsys):
 
 
 def test_owned_is_real_containment(tmp_path, monkeypatch):
-    import skills_hub
+    from jev_router import hub as skills_hub
     hub, old = tmp_path / ".skills", tmp_path / ".skills-old"
     (hub / "a").mkdir(parents=True)
     (old / "b").mkdir(parents=True)

@@ -11,12 +11,11 @@ the latest USER_INPUT line is read back from the transcript (format verified aga
 see models.json) and the context is injected only once per user turn (tracked per
 conversationId + step_index in ~/.jev-router/state/).
 
-Usage (installed globally by router/install_hooks.py, via the space-free shim
-~/.jev-router/bin/run_hook.py - Antigravity's `cmd /c` breaks on quoted paths with spaces):
-    python run_hook.py claude      UserPromptSubmit
-    python run_hook.py codex       UserPromptSubmit
-    python run_hook.py antigravity PreInvocation
-    python run_hook.py claude      UserPromptSubmit --cloud-only   # project-level hook, cloud sandboxes only
+Usage (installed globally by the installer via the shim ~/.jev-router/bin/run_hook.py):
+    python -m jev_router.hooks claude      UserPromptSubmit | Stop
+    python -m jev_router.hooks codex       UserPromptSubmit | Stop
+    python -m jev_router.hooks antigravity PreInvocation | Stop
+    python -m jev_router.hooks claude      UserPromptSubmit --cloud-only   # project hook, cloud sandboxes only
 
 Exit code: always 0 - the router never blocks a prompt.
 """
@@ -28,9 +27,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import core  # noqa: E402
-import queue_state  # noqa: E402
+from . import core, queue_state
 
 LOG_FILE = core.STATE_DIR / "logs" / "routing.jsonl"
 SEEN_FILE = core.STATE_DIR / "state" / "antigravity_seen.json"
@@ -146,18 +143,12 @@ def _transcript_mtime(payload):
         return None
 
 
-def should_skip(prompt):
-    low = prompt.lstrip().lower()
-    return (len(prompt) < 3 or low.startswith("/") or low.startswith(SYSTEM_PREFIXES)
-            or any(t in low for t in SKIP_TAGS))
-
-
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     cloud_only = "--cloud-only" in args
     args = [a for a in args if a != "--cloud-only"]
     if len(args) != 2:
-        print("Usage: run_hook.py <claude|codex|antigravity> <hook_event_name> [--cloud-only]", file=sys.stderr)
+        print("Usage: python -m jev_router.hooks <claude|codex|antigravity> <hook_event_name> [--cloud-only]", file=sys.stderr)
         return 0
     if cloud_only and not core.is_cloud():
         return 0  # locally the global (user-level) hook already runs - avoid double injection

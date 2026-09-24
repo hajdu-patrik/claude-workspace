@@ -21,20 +21,22 @@ details or absolute user paths. Per-user state belongs in `~/.jev-router/`, neve
 ## Conventions
 
 - Python 3.10+, standard library only (no third-party runtime dependencies). Must work on
-  Windows, macOS and Linux – go through `router/platforms.py` for paths, links and executables.
+  Windows, macOS and Linux – go through `jev_router/platforms.py` for paths, links and executables.
+- Package layout: code in `jev_router/` (relative imports), data in `jev_router/config/`, worker
+  templates in `jev_router/templates/agents/`, bundled skills in `jev_router/skills/`. One CLI
+  (`python install.py <command>` = `python -m jev_router <command>`); no stand-alone scripts.
 - Hooks must never block or crash the host tool: catch everything, always exit 0.
-- Model policy (`router/models.json`): Claude only via generic aliases (fable / sonnet / opus),
+- Model policy (`jev_router/config/models.json`): Claude only via generic aliases (fable / sonnet / opus),
   never Haiku, never a dated model ID; `ultra` effort is banned for every provider.
-- Worker agents are generated from `agents/*.md` + `router/targets.json` + `router/models.json`
-  (`python router/skills_hub.py agents --apply`) – edit the sources, never the generated files.
+- Worker agents are generated from `jev_router/templates/agents/*.md` + `config/targets.json` +
+  `config/models.json` (`python install.py skills --apply`) – edit the sources, never the generated files.
 - Installers are idempotent and dry-run by default; changed user config files get a `.bak` copy.
 
 ## Checks before committing
 
 ```bash
-python -m pytest tests -q
+python -m pytest tests -q        # includes the model-policy test
 python eval/eval_router.py
-python scripts/check_models.py
 ```
 
 Record user-visible changes in `CHANGELOG.md` (Keep a Changelog style).

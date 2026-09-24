@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
-"""Shared skill hub (~/.skills) + generated worker agents, for Claude Code, Codex and Antigravity.
+"""Shared skill hub (~/.skills) + generated worker agents for Claude Code, Codex and Antigravity.
 
-    python router/skills_hub.py migrate [--apply]   move ~/.claude/skills/<real dirs> into ~/.skills
-    python router/skills_hub.py link    [--apply]   link every hub skill into each tool + repo skills into the hub
-    python router/skills_hub.py agents  [--apply]   generate the <tier>-worker-<effort> agents (targets.json)
-    python router/skills_hub.py catalog              rebuild ~/.skills/catalog.json (router's skill index)
-    python router/skills_hub.py doctor               report broken links, duplicates, folders without SKILL.md
-    python router/skills_hub.py all     [--apply]   migrate + link + agents + catalog + doctor
-
-Without --apply every mutating command is a DRY RUN: it only prints what it would do.
+Driven by the installer: `python install.py` (full setup) and `python install.py skills [--apply]`
+(re-link, regenerate agents, rebuild the catalog, check health). Mutating steps are dry runs unless
+APPLY is set.
 
 Layout (the hub is the single source of truth; everything else is a directory link - no
 admin rights or Developer Mode needed on Windows):
-    ~/.skills/<name>/SKILL.md            real folder (moved here from ~/.claude/skills)
-    ~/.skills/<repo skill>  -> <repo>/skills/<name>      (repo-owned skills stay version-controlled)
+    ~/.skills/<name>/SKILL.md            real folder (moved here from each tool's own skill folder)
+    ~/.skills/<bundled>     -> jev_router/skills/<name>  (skills shipped with jev-router)
     ~/.claude/skills/<name> -> ~/.skills/<name>          Claude Code (CLI + desktop Code tab)
     ~/.agents/skills/<name> -> ~/.skills/<name>          Codex (CLI + ChatGPT app's Codex mode)
-    ~/.gemini/config/skills.json  entries: [<absolute ~/.skills>, <absolute repo/skills>]  Antigravity
+    ~/.gemini/config/skills.json  entries: [<absolute ~/.skills>, <absolute jev_router/skills>]  Antigravity
 Links are junctions on Windows and symlinks on macOS/Linux, one per skill rather than one for the
 whole folder: ~/.claude/skills also holds app-managed content (synced/), and a fully linked skills
 directory is a known Claude Code regression.
 
 Safety: never deletes a real directory. Only junctions this tool can prove it owns (pointing into
-the hub or the repo's skills/) are ever removed/replaced; a name collision is reported, not resolved.
+the hub or jev_router/skills/) are ever removed/replaced; a name collision is reported, not resolved.
 """
 import json
 import os
@@ -31,15 +26,14 @@ import shutil
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import platforms as P  # noqa: E402
-import skill_index  # noqa: E402
+from . import catalog, platforms as P
 
-REPO = Path(__file__).resolve().parent.parent
+PKG = Path(__file__).resolve().parent
+REPO = PKG.parent
 HOME = Path.home()
-HUB = skill_index.HUB
-REPO_SKILLS = REPO / "skills"
-AGENT_TEMPLATES = REPO / "agents"
+HUB = catalog.HUB
+REPO_SKILLS = PKG / "skills"            # skills bundled with jev-router
+AGENT_TEMPLATES = PKG / "templates" / "agents"
 CLAUDE_SKILLS = P.PATHS["claude_skills"]
 CODEX_SKILLS = P.PATHS["codex_skills"]
 LEGACY_CODEX_SKILLS = HOME / ".codex" / "skills"
@@ -50,7 +44,7 @@ CODEX_CONFIG = P.PATHS["codex_config"]
 PROVIDERS = ("claude", "codex", "antigravity")  # narrowed by the installer to what is installed
 APP_MANAGED = {"synced"}  # folders inside ~/.claude/skills owned by the desktop app
 GEN_MARK = "generated-by: jev-router"
-TOML_BEGIN, TOML_END = "# >>> jev-router agents (generated - edit router/targets.json, not this block)", "# <<< jev-router agents"
+TOML_BEGIN, TOML_END = "# >>> jev-router agents (generated - edit jev_router/config/targets.json, not this block)", "# <<< jev-router agents"
 
 APPLY = False
 
@@ -162,17 +156,14 @@ def cmd_link():
             ensure_link(CLAUDE_SKILLS / s.name, s, "claude")
         if "codex" in PROVIDERS:
             ensure_link(CODEX_SKILLS / s.name, s, "codex")
-    # 3) drop stale links we own (target gone / skill removed from the hub), and legacy locations
-    for base in (CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS, REPO / ".claude" / "skills"):
+    # 3) drop stale links we own (target gone / skill removed from the hub); ~/.codex/skills is
+    #    Codex's legacy location - its skills are served from ~/.agents/skills instead
+    for base in (CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS):
         if not base.is_dir():
             continue
         for link in base.iterdir():
-            legacy = base in (LEGACY_CODEX_SKILLS, REPO / ".claude" / "skills")
-            if owned(link) and (legacy or link.name not in names or not link.exists()):
+            if owned(link) and (base == LEGACY_CODEX_SKILLS or link.name not in names or not link.exists()):
                 act(f"remove stale/legacy link {link}", lambda l=link: rm_junction(l))
-    repo_agents = REPO / ".claude" / "agents"
-    if is_junction(repo_agents):
-        act(f"remove legacy project agents link {repo_agents} (agents are now user-level)", lambda: rm_junction(repo_agents))
     if "antigravity" not in PROVIDERS:
         return
     # 4) Antigravity: one manifest entry for the whole hub. Must be an ABSOLUTE path: agy 1.2.9
@@ -189,8 +180,10 @@ def cmd_link():
     hub_path = str(HUB).replace("\\", "/")
     # The repo's skills/ is listed too: agy does not follow directory junctions inside an entry
     # (verified 2026-09-24: the junctioned ~/.skills/cli-bridge was not loaded, real folders were).
-    new_entries = ([e for e in entries if e.get("path") not in (repo_path, "~/.skills", hub_path)]
-                   + [{"path": hub_path}, {"path": repo_path}])
+    # keep foreign entries that still exist; drop ours and any path that no longer exists (a moved checkout)
+    kept = [e for e in entries if e.get("path") not in (repo_path, "~/.skills", hub_path)
+            and Path(os.path.expanduser(str(e.get("path", "")))).exists()]
+    new_entries = kept + [{"path": hub_path}, {"path": repo_path}]
     if new_entries != entries:
         cfg["entries"] = new_entries
         act(f"{AGY_SKILLS_JSON}: entries -> {new_entries}",
@@ -213,8 +206,8 @@ def planned_agents():
     2) Tier-specific agents whose template isn't the provider's generic one (e.g. test-worker-*),
        for that tier's own effort range.
     Body/description come from agents/<name>.md (Claude: <model>-worker.md, Codex: codex-worker.md)."""
-    import core  # local import: core pulls in lang + skill_index, only needed here
-    targets = json.loads((REPO / "router" / "targets.json").read_text(encoding="utf-8"))
+    from . import core  # local import: only needed here
+    targets = json.loads((PKG / "config" / "targets.json").read_text(encoding="utf-8"))
     out, seen = [], set()
 
     def template(name):
@@ -281,7 +274,8 @@ def cmd_agents():
             act(f"remove stale generated codex role {f}", f.unlink)
     block.append(TOML_END)
     cfg = CODEX_CONFIG.read_text(encoding="utf-8") if CODEX_CONFIG.exists() else ""
-    pattern = re.compile(re.escape(TOML_BEGIN) + r".*?" + re.escape(TOML_END) + r"\n?", re.S)
+    # match the marker by its stable prefix: older versions wrote a different hint after it
+    pattern = re.compile(r"# >>> jev-router agents[^\n]*\n.*?" + re.escape(TOML_END) + r"\n?", re.S)
     new_block = "\n".join(block) + "\n"
     old = pattern.search(cfg)
     if old:
@@ -300,12 +294,12 @@ def cmd_agents():
 
 
 def cmd_catalog():
-    items = skill_index.write_catalog()
+    items = catalog.write_catalog()
     by = {}
     for s in items:
         for p in s["native_in"]:
             by[p] = by.get(p, 0) + 1
-    print(f"catalog: {len(items)} skills -> {skill_index.CATALOG}  (native: {by})")
+    print(f"catalog: {len(items)} skills -> {catalog.CATALOG}  (native: {by})")
 
 
 def cmd_doctor():
@@ -323,7 +317,7 @@ def cmd_doctor():
             elif p.is_dir() and not (p / "SKILL.md").is_file():
                 print(f"[WARN] no SKILL.md: {p}")
     names = {}
-    for s in skill_index.build_catalog():
+    for s in catalog.build_catalog():
         base = s["name"].split(":")[-1]
         names.setdefault(base, []).append(s["name"])
     for base, full in names.items():
@@ -332,23 +326,3 @@ def cmd_doctor():
     print(f"doctor: {problems} problem(s)")
     return problems
 
-
-def main():
-    global APPLY
-    args = sys.argv[1:]
-    APPLY = "--apply" in args
-    args = [a for a in args if a != "--apply"]
-    cmd = args[0] if args else "doctor"
-    steps = {"migrate": [cmd_migrate], "link": [cmd_link], "agents": [cmd_agents], "catalog": [cmd_catalog],
-             "doctor": [cmd_doctor], "all": [cmd_migrate, cmd_link, cmd_agents, cmd_catalog, cmd_doctor]}
-    if cmd not in steps:
-        print(__doc__)
-        return 2
-    for step in steps[cmd]:
-        print(f"== {step.__name__[4:]}")
-        step()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

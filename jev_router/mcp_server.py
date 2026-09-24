@@ -10,7 +10,7 @@ Tools:
   get_skill(name)                                -> one skill's SKILL.md (works cross-tool, and in
                                                    Cowork's VM where local paths are not readable)
 
-Registered by router/install_hooks.py via the shim ~/.jev-router/bin/mcp_server.py. A hook is
+Registered by the installer via the shim ~/.jev-router/bin/mcp_server.py. A hook is
 automatic; an MCP tool is only called if the model decides to - the Claude "Personal
 preferences" line in README.md asks it to call route_prompt first.
 """
@@ -18,9 +18,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import core  # noqa: E402
-import skill_index  # noqa: E402
+from . import catalog, core
 
 PROTOCOL = "2025-06-18"
 MAX_SKILL_CHARS = 20000
@@ -62,17 +60,17 @@ def tool_route_prompt(args):
     if error:
         out.append(f"(JEV unavailable, local router used: {error})")
     if d.get("skill"):
-        entry = next((s for s in skill_index.load_catalog() if s["name"] == d["skill"]), None)
+        entry = next((s for s in catalog.load_catalog() if s["name"] == d["skill"]), None)
         if entry:
             out += ["", f"=== Skill `{entry['name']}` (SKILL.md) ===", read_skill(entry)]
     return "\n".join(out), False
 
 
 def tool_list_skills(args):
-    cat = skill_index.load_catalog()
+    cat = catalog.load_catalog()
     limit = int(args.get("limit") or 20)
     q = str(args.get("query") or "").strip()
-    items = [s for _, s in skill_index.prefilter(q, cat, limit, min_score=0.5)] if q else cat[:limit]
+    items = [s for _, s in catalog.prefilter(q, cat, limit, min_score=0.5)] if q else cat[:limit]
     if not items:
         return "No matching skill.", False
     return "\n".join(f"- {s['name']} [{', '.join(s['native_in'])}]: {s['description'][:200]}" for s in items), False
@@ -80,7 +78,7 @@ def tool_list_skills(args):
 
 def tool_get_skill(args):
     name = str(args.get("name", "")).strip()
-    entry = next((s for s in skill_index.load_catalog() if s["name"] == name or s["name"].split(":")[-1] == name), None)
+    entry = next((s for s in catalog.load_catalog() if s["name"] == name or s["name"].split(":")[-1] == name), None)
     if not entry:
         return f"Unknown skill '{name}'. Use list_skills.", True
     return f"Skill `{entry['name']}` - folder: {entry['path']}\n\n{read_skill(entry)}", False

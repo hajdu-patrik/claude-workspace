@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Provider-independent router core: classification + decision + rendering. Standard library only.
 
-Used by every entry point (run_hook.py for Claude Code / Codex CLI / Antigravity CLI hooks, and
+Used by every entry point (hooks.py for Claude Code / Codex CLI / Antigravity CLI hooks, and
 mcp_server.py for the hook-less chat modes). This file knows nothing about any tool's I/O
 format: just (prompt, provider) -> decision -> instruction text.
 
@@ -12,7 +12,7 @@ jev|local|auto switches it without code changes once real JEV access exists.
 Per-provider "what to pick" (tier -> agent/model/effort/text) lives in routes.json +
 targets.json, not here: adding a provider or renaming a model only means editing those.
 
-Config is always read from THIS repo (located via __file__), never from the current project -
+Config is always read from this package (jev_router/config/), never from the current project -
 the hook is installed globally and runs inside arbitrary other projects.
 """
 import json
@@ -23,12 +23,9 @@ import unicodedata
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import lang  # noqa: E402
-import skill_index  # noqa: E402
+from . import catalog, lang
 
-ROOT = Path(__file__).resolve().parent.parent
-CFG_DIR = ROOT / "router"
+CFG_DIR = Path(__file__).resolve().parent / "config"
 STATE_DIR = Path(os.environ.get("JEV_ROUTER_HOME", str(Path.home() / ".jev-router")))
 
 API_URL = os.environ.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone")
@@ -363,7 +360,7 @@ def classify(prompt, skills=None, backend=None, effort=None, models=None):
     """(prompt) -> JEV-shaped answers dict. The single function that changes behaviour once real
     JEV access exists: decide() and its callers stay the same.
 
-    skills: [(score, skill_dict)] pre-filter candidates (see skill_index.prefilter).
+    skills: [(score, skill_dict)] pre-filter candidates (see catalog.prefilter).
     effort: dict from effort_levels_for(provider). JEV picks the level itself; the mock derives
     it from difficulty. An excluded level (e.g. 'ultra' for Claude) is stripped here in code too,
     never trusting the model-based answer alone for a hard constraint."""
@@ -557,8 +554,7 @@ def route(prompt, provider, backend=None, session_model=None):
              "destructive_p": None, "notes": ["manual override"], "backend": "override", "lang": lang_code}
         return d, render(d, regex_hit, targets, provider, lang_code, models, session_model), regex_hit, None
 
-    catalog = skill_index.load_catalog()
-    candidates = skill_index.prefilter(prompt, catalog, SKILL_CANDIDATES)
+    candidates = catalog.prefilter(prompt, catalog.load_catalog(), SKILL_CANDIDATES)
     by_name = {s["name"]: s for _, s in candidates}
     error = None
     try:

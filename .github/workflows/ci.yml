@@ -18,12 +18,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install pytest
+      - run: python -m pip install -e .[dev]
       - name: Unit tests
         run: python -m pytest tests -q
       - name: Routing evaluation (Hungarian + English)
         run: python eval/eval_router.py
-      - name: Model policy
-        run: python scripts/check_models.py
       - name: Installer dry run
         run: python install.py --dry-run --yes --providers=claude,codex,antigravity --no-migrate
+      - name: Package entry points
+        run: |
+          python -m jev_router --help
+          jev-router --help

@@ -220,11 +220,3 @@ def prefilter(prompt, catalog, n=8, min_score=1.5):
     scored.sort(key=lambda x: -x[0])
     return scored[:n]
 
-
-if __name__ == "__main__":
-    import sys
-    cat = write_catalog()
-    print(f"{len(cat)} skills -> {CATALOG}")
-    if len(sys.argv) > 1:
-        for sc, s in prefilter(" ".join(sys.argv[1:]), cat):
-            print(f"  {sc:6.2f}  {s['name']}")

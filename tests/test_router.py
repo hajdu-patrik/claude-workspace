@@ -6,12 +6,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "router"))
-import core  # noqa: E402
-import lang  # noqa: E402
-import mcp_server  # noqa: E402
-import run_hook  # noqa: E402
-import skill_index  # noqa: E402
+from jev_router import catalog as skill_index, core, hooks as run_hook, lang, mcp_server
 
 CATALOG = [
     {"name": "anthropic-skills:pptx", "description": "Create and edit PowerPoint presentations, slide decks (.pptx).",

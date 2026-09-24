@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Checks the model policy in router/models.json against every place a model or effort is named.
+"""Checks the model policy in jev_router/config/models.json against every place a model or effort is named.
 Standard library only.
 
-  - Claude: .claude/settings.json "model", agents/*.md "model:", every Claude tier model in
-    router/targets.json: generic alias of an allowed family, never haiku, never a pinned/dated ID.
+  - Claude: .claude/settings.json "model", jev_router/templates/agents/*.md "model:", every Claude tier model in
+    jev_router/config/targets.json: generic alias of an allowed family, never haiku, never a pinned/dated ID.
   - Every provider: each tier model exists in models.json (for Claude's cli:* tiers: in that
     other provider's list), each tier effort is supported by that model, and no excluded effort
     (policy.excluded_efforts, 'ultra') appears in any tier.
-Exit code: 0 = OK, 1 = policy violation.  Usage: python scripts/check_models.py
+Runs as part of the test suite: python -m pytest tests -q
 """
 import json
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PKG = ROOT / "jev_router"
 
 
 def main():
-    models = json.loads((ROOT / "router/models.json").read_text(encoding="utf-8"))
-    targets = json.loads((ROOT / "router/targets.json").read_text(encoding="utf-8"))
+    models = json.loads((PKG / "config" / "models.json").read_text(encoding="utf-8"))
+    targets = json.loads((PKG / "config" / "targets.json").read_text(encoding="utf-8"))
     banned = set(models.get("policy", {}).get("excluded_efforts", ["ultra"]))
     claude = models["claude"]
     allowed, excluded = set(claude["allowed_families"]), set(claude.get("excluded_families", []))
@@ -28,7 +28,7 @@ def main():
     settings = json.loads((ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
     if "model" in settings:
         found.append((".claude/settings.json", settings["model"]))
-    for md in sorted((ROOT / "agents").glob("*.md")):
+    for md in sorted((PKG / "templates" / "agents").glob("*.md")):
         m = re.search(r"^model:\s*(\S+)\s*$", md.read_text(encoding="utf-8"), re.M)
         if m:
             found.append((str(md.relative_to(ROOT)).replace("\\", "/"), m.group(1)))
@@ -72,5 +72,5 @@ def main():
     return 1 if errors else 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def test_model_policy():
+    assert main() == 0

@@ -16,8 +16,8 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "router"))
-import core  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from jev_router import core  # noqa: E402
 
 TARGETS = {"task": 0.85, "destr_recall": 1.0, "destr_fp": 0.05, "lang": 1.0}
 

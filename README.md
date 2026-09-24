@@ -56,7 +56,8 @@ Preview without changing anything: `python install.py --dry-run`.
 | `python install.py models --probe` | test which models your accounts may use (stored per user) |
 | `python install.py remote --name "My PC" [--workdir <folder>]` | remote access from other devices ([guide](docs/remote-access.md)) |
 | `python install.py uninstall` | remove hooks, MCP entries and remote access (skills stay) |
-| `python scripts/check_tools.py` | health report |
+| `python install.py skills [--apply]` | re-link skills, regenerate workers, rebuild the catalog |
+| `python install.py doctor` | health report |
 
 **One-time steps after installing:** Codex runs a new hook only after you trust it (`codex` → `/hooks`).
 For Claude desktop *Chat/Cowork*, restart the app and add to *Settings → Profile → Personal preferences*:
@@ -67,10 +68,10 @@ For Claude desktop *Chat/Cowork*, restart the app and add to *Settings → Profi
 ## 🧭 How It Works
 
 ```
-prompt ─► hook / MCP tool ─► router/core.route()
+prompt ─► hook / MCP tool ─► jev_router/core.route()
                                ├─ lang.detect()             answer language
                                ├─ is_destructive()          regex safety net (+ JEV verdict)
-                               ├─ skill_index.prefilter()   shared skill catalog → ≤ 8 candidates
+                               ├─ catalog.prefilter()       shared skill catalog → ≤ 8 candidates
                                ├─ classify()                JEV (token) or built-in classifier
                                ├─ decide()                  routes.json: task × difficulty → tier
                                └─ render()                  targets.json: tier → worker, model, effort
@@ -93,7 +94,7 @@ No tool lets a hook switch the running model. jev-router therefore generates one
 Codex roles `<model>-<effort>` – and the router delegates to the right one. Antigravity has no
 fixed-model agents, so its model choice is advisory (or enforced through the `cli-bridge` skill).
 
-| Provider | Models (catalog: `router/models.json`) | Effort levels |
+| Provider | Models (catalog: `jev_router/config/models.json`) | Effort levels |
 | --- | --- | --- |
 | Claude | fable, sonnet, opus – generic aliases only, never Haiku | low · medium · high · xhigh · max |
 | Codex | gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, gpt-reserve by default; more after `models --probe` | low … max (per model) |
@@ -154,7 +155,7 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 | --- | --- |
 | JEV token | `python install.py --jev-token=<token>` or environment variable `TYPESAFE_API_KEY` |
 | Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `bin/` |
-| Model catalog, tiers, routing table | `router/models.json`, `router/targets.json`, `router/routes.json` |
+| Model catalog, tiers, routing table | `jev_router/config/models.json`, `targets.json`, `routes.json` |
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
@@ -170,27 +171,38 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 
 ## 📂 Repository Layout
 
-| Path | Purpose |
-| --- | --- |
-| `install.py` | cross-platform installer (detect, log in, connect, skills, extras, uninstall) |
-| `router/core.py` | classification, decision, rendering, safety regex, JEV client + built-in classifier |
-| `router/run_hook.py` · `router/queue_state.py` | hook entry point for all tools · queue protection |
-| `router/mcp_server.py` | MCP server: `route_prompt`, `list_skills`, `get_skill` |
-| `router/skill_index.py` · `router/skills_hub.py` | skill catalog + pre-filter · shared folder, links, worker generation |
-| `router/install_hooks.py` · `router/platforms.py` · `router/remote.py` | hooks/MCP · OS abstraction · remote access |
-| `router/*.json` | model catalog and policy, routing table, tier targets |
-| `agents/` · `skills/` | worker templates · bundled skills (`cli-bridge`) |
-| `tests/` · `eval/` | unit tests · 100 Hungarian + 100 English labelled prompts |
-| `docs/` · `scripts/` | guides · health report and model-policy check |
+```
+install.py                 entry point: `python install.py [command]` (same as `python -m jev_router`)
+pyproject.toml             package metadata, console script `jev-router`, pytest settings
+jev_router/                the package
+├── cli.py                 installer commands: setup, detect, models, remote, skills, doctor, uninstall
+├── core.py                classification, decision, rendering, safety regex, JEV client + built-in classifier
+├── lang.py                Hungarian / English detection
+├── catalog.py             skill catalog and pre-filter
+├── hooks.py               hook entry point for all three tools (python -m jev_router.hooks)
+├── queue_state.py         queue protection
+├── mcp_server.py          MCP server: route_prompt, list_skills, get_skill (python -m jev_router.mcp_server)
+├── hub.py                 shared skill folder, links, worker generation
+├── integrations.py        hook + MCP registration per tool
+├── platforms.py           OS abstraction (paths, links, executables, detection)
+├── remote.py              optional remote access
+├── doctor.py              health report
+├── config/                models.json (catalog + policy), routes.json (task → tier), targets.json (tier → worker)
+├── templates/agents/      worker templates (rendered into ~/.claude/agents and ~/.codex/agents)
+└── skills/                skills bundled with jev-router (cli-bridge)
+tests/                     unit tests, model-policy test
+eval/                      100 Hungarian + 100 English labelled prompts, evaluation script
+docs/                      speech-to-text and remote-access guides
+```
 
 ---
 
 ## 🧪 Development
 
 ```bash
-python -m pytest tests -q          # unit tests
+pip install -e .[dev]              # optional: editable install, adds the `jev-router` command
+python -m pytest tests -q          # unit tests incl. the model-policy check
 python eval/eval_router.py         # full pipeline on the labelled prompts (exit 1 below target)
-python scripts/check_models.py     # every model / effort referenced is allowed and in the catalog
 ```
 
 Evaluation targets: task accuracy ≥ 85 % per language, destructive-request recall 100 %,

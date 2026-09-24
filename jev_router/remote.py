@@ -20,7 +20,7 @@ import os
 import plistlib
 import time
 
-import platforms as P
+from . import platforms as P
 
 BIN = P.HOME / ".jev-router" / "bin"
 CONFIG = P.HOME / ".jev-router" / "config.json"

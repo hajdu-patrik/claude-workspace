@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Read-only health report: installed tools and logins, hooks, MCP registrations, skill hub, agents,
-configuration and recent router activity. Changes nothing.   Usage: python scripts/check_tools.py
+configuration and recent router activity. Changes nothing.   Usage: python install.py doctor
 """
 import json
 import os
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "router"))
-import platforms as P  # noqa: E402
+from . import platforms as P
 
 HOME = P.HOME
 
@@ -85,7 +83,3 @@ def main():
         line(True, f"last {p} prompt", ts)
     if not last:
         line(False, "no routed prompt logged yet")
-
-
-if __name__ == "__main__":
-    main()
