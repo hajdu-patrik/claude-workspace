@@ -23,6 +23,9 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "STATE_DIR", tmp_path)  # queue state, user config, model overrides
     monkeypatch.setattr(core, "BACKEND", "local")
     monkeypatch.setenv("ROUTER_BACKEND", "local")
+    # the expected decisions below assume this threshold (default 0.6); the subprocess test inherits the env
+    monkeypatch.setattr(core, "MIN_CONF", 0.4)
+    monkeypatch.setenv("ROUTER_MIN_CONFIDENCE", "0.4")
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.delenv("ROUTER_MODE", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_REMOTE", raising=False)
