@@ -46,10 +46,16 @@ PATHS = {
 
 # --- links -----------------------------------------------------------------------------------------
 def is_link(p):
+    """Symlink or Windows junction. Path.is_junction() only exists on Python 3.12+, so older
+    versions check the reparse-point attribute directly."""
     p = Path(p)
     try:
-        return p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction())
-    except OSError:
+        if p.is_symlink():
+            return True
+        if hasattr(p, "is_junction"):
+            return p.is_junction()
+        return IS_WINDOWS and bool(os.lstat(p).st_file_attributes & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+    except (OSError, AttributeError):
         return False
 
 
