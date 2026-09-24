@@ -23,20 +23,30 @@ directory: run `claude` once in that folder and accept the dialog before setting
 | --- | --- | --- |
 | **Claude Code** | `claude remote-control --name <name>` – Windows scheduled task `JevRouter-ClaudeRemote`, macOS launchd agent `com.jev-router.claude-remote`, Linux `systemd --user` service `jev-router-claude-remote` | Claude app → **Code**, or [claude.ai/code](https://claude.ai/code) → *<name>* |
 | **Antigravity** | `agy remote-control start --name <name> --session` (the CLI registers its own autostart) | [antigravity.google.com](https://antigravity.google.com) → *<name>* (can be installed as a web app for notifications) |
-| **Codex** | macOS / Linux: `codex remote-control start`. Windows: the ChatGPT desktop app is started at logon (task `JevRouter-ChatGPT`) and hosts the connection | ChatGPT app, after a one-time pairing (below) |
+| **Codex** | macOS / Linux: `codex remote-control start`. Windows: `codex app-server --remote-control --listen off`, kept running by the scheduled task `JevRouter-CodexRemote` | ChatGPT app, after a one-time pairing (below) |
+
+**Windows: no windows, no apps.** Everything runs in the background from logon: the console
+programs run under `conhost.exe --headless`, so no terminal window opens (a plain `cmd.exe` task or
+autostart entry opens one in Windows Terminal, the default terminal on Windows 11). The installer
+also wraps Antigravity's own autostart entry this way. The desktop apps (Claude, ChatGPT,
+Antigravity) are not started – open them whenever you like, they work as usual.
 
 ### One-time pairing for Codex
 
 - **Windows:** ChatGPT desktop app → Settings → **Connections** → turn on *Control this PC* → scan
-  the QR code with the ChatGPT mobile app. Optionally enable *Keep this PC awake*.
+  the QR code with the ChatGPT mobile app (or run `codex remote-control pair`). The pairing belongs
+  to the computer, so the background server uses it too.
 - **macOS / Linux:** run `codex remote-control pair` and follow the instructions.
 
 The pairing persists. Pair again only after signing out, reinstalling the app, switching phones or
 revoking the device.
 
-Why the ChatGPT app on Windows: `codex remote-control start` must detach a background daemon. On
+Why not `codex remote-control start` on Windows: it must detach a background daemon, and on
 Windows builds where every process (Explorer included) runs inside a Job Object without breakaway
-permission, the daemon cannot detach from any launcher; the ChatGPT app hosts the connection itself.
+permission it cannot detach from any launcher. The app server runs in the foreground instead.
+A computer has one Codex remote connection: while the ChatGPT app is open and holds it, the
+background server waits and retries, and takes over when the app closes – remote access works
+either way, with the same sessions.
 
 ## Requirements
 

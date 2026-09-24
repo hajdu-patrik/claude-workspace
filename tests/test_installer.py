@@ -101,6 +101,7 @@ def test_install_hooks_idempotent_and_uninstall(tmp_path, monkeypatch):
     monkeypatch.setattr(P, "claude_desktop_config", lambda: tmp_path / "claude_desktop_config.json")
     monkeypatch.setattr(install_hooks, "SHIM_HOOK", tmp_path / "bin" / "run_hook.py")
     monkeypatch.setattr(install_hooks, "SHIM_MCP", tmp_path / "bin" / "mcp_server.py")
+    monkeypatch.setattr(install_hooks, "SHIM_ROUTE", tmp_path / "bin" / "route.py")
     paths["claude_settings"].parent.mkdir(parents=True)
     paths["claude_settings"].write_text(json.dumps({"model": "sonnet", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}}))
     assert install_hooks.install(apply=True) > 0
@@ -180,9 +181,27 @@ def test_bad_json_config_is_reported_not_fatal(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(P, "claude_desktop_config", lambda: tmp_path / "cd.json")
     monkeypatch.setattr(install_hooks, "SHIM_HOOK", tmp_path / "bin" / "run_hook.py")
     monkeypatch.setattr(install_hooks, "SHIM_MCP", tmp_path / "bin" / "mcp_server.py")
+    monkeypatch.setattr(install_hooks, "SHIM_ROUTE", tmp_path / "bin" / "route.py")
     paths["claude_settings"].parent.mkdir(parents=True)
     paths["claude_settings"].write_text("{broken", encoding="utf-8")
     install_hooks.install(("claude", "codex"), apply=True)
     assert "[FAIL]" in capsys.readouterr().out
     assert paths["claude_settings"].read_text(encoding="utf-8") == "{broken"      # left untouched
     assert "run_hook.py codex" in paths["codex_hooks"].read_text(encoding="utf-8")  # others still installed
+
+
+def test_windows_remote_loops_run_headless(tmp_path, monkeypatch):
+    """Remote services start under `conhost --headless` (no terminal window at logon); the loop script
+    restarts the command, and a previous instance is stopped before the task is registered again."""
+    from jev_router import remote
+    calls = []
+    monkeypatch.setattr(remote, "BIN", tmp_path)
+    monkeypatch.setattr(remote, "_ps", lambda script: calls.append(script) or (0, ""))
+    remote._win_loop("JevRouter-Test", "test-remote.cmd", tmp_path, 'call "codex.cmd" app-server', '$_.Name -eq "x"')
+    script = (tmp_path / "test-remote.cmd").read_bytes().decode("utf-8")
+    assert ':loop\r\ncall "codex.cmd" app-server\r\ntimeout /t 30' in script and "goto loop\r\n" in script
+    assert "\r\r" not in script
+    assert "Stop-ScheduledTask" in calls[0] and "test-remote.cmd" in calls[0]
+    assert "conhost.exe" in calls[1] and "--headless cmd.exe /c" in calls[1] and "-AtLogOn" in calls[1]
+    exe, args = remote._hidden_ps("'ok'")
+    assert exe.lower().endswith("conhost.exe") and args.startswith("--headless powershell.exe")

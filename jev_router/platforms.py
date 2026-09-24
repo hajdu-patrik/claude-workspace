@@ -124,6 +124,18 @@ def python_exe():
     return exe
 
 
+def python_exe_windowless():
+    """Interpreter for stdio servers (MCP): pythonw.exe on Windows. A host that runs without a
+    console (e.g. a detached background daemon) would otherwise open a terminal window for
+    python.exe. pythonw still talks over the stdin/stdout pipes the host passes it."""
+    exe = python_exe()
+    if IS_WINDOWS:
+        w = Path(exe).with_name("pythonw.exe")
+        if Path(exe).name.lower() == "python.exe" and w.is_file():
+            return str(w)
+    return exe
+
+
 def shell_arg(p):
     """One command-line argument, safe for sh (Claude/Codex on POSIX), bash/cmd (Windows) and
     Antigravity's `cmd /c`: short path on Windows, shell-quoted on POSIX."""

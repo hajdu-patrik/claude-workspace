@@ -5,6 +5,36 @@ dates are ISO 8601.
 
 ---
 
+## [Unreleased]
+
+### Added
+- `route` command – `python install.py route [--provider claude] [--json] <prompt text...>` (no text:
+  read from stdin) – returns the router's decision for one prompt or sub-task: the rendered
+  `[router] …` text, or with `--json` one object with `model`, `effort`, `agent`, `tier`, `task`,
+  `difficulty`, `extra_agents`, `destructive`, `skill`, `verify`, `lang`, `backend`, `text` and `note`.
+  Side-effect free (no queue state, no log); `#norouter` / `#privat` are not routed and nothing is
+  sent to TypeSafe. Exit codes: 0 success, 2 usage error, 1 unexpected error (exception type only).
+- `~/.jev-router/bin/route.py` shim, written by the installer next to the hook and MCP shims, so
+  other projects can run `python ~/.jev-router/bin/route.py --json "<text>"` without knowing where
+  the repository lives.
+
+### Changed
+- The routing log records the worker a decision delegates to (`target_agent`).
+- Windows remote access runs entirely in the background from logon: Claude Remote Control and the
+  new Codex remote app server (`codex app-server --remote-control --listen off`, task
+  `JevRouter-CodexRemote`) run under `conhost.exe --headless`, and Antigravity's autostart entry is
+  wrapped the same way – no terminal window opens at logon.
+- The ChatGPT desktop app is no longer started at logon (task `JevRouter-ChatGPT` is removed);
+  opened by hand it works as usual.
+
+### Fixed
+- Windows: the MCP server is registered with `pythonw.exe` – a host without a console (the
+  detached Antigravity remote daemon) opened a terminal window for `python.exe`.
+- The loop scripts in `~/.jev-router/bin` were written with `\r\r\n` line endings.
+- Registry changes are made through a one-shot scheduled task, so they also take effect when the
+  installer runs inside an MSIX container (e.g. `python` from the Python Install Manager's alias),
+  whose HKCU writes would otherwise only land in a private copy.
+
 ## [3.1.0] – 2026-09-24 · Standard package layout
 
 ### Changed

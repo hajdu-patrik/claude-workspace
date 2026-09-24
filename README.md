@@ -58,6 +58,7 @@ Preview without changing anything: `python install.py --dry-run`.
 | `python install.py uninstall` | remove hooks, MCP entries and remote access (skills stay) |
 | `python install.py skills [--apply]` | re-link skills, regenerate workers, rebuild the catalog |
 | `python install.py doctor` | health report |
+| `python install.py route [--provider claude] [--json] <text>` | routing decision for one prompt or sub-task, side-effect free ([details](#routing-decision-on-demand)) |
 
 **One-time steps after installing:** Codex runs a new hook only after you trust it (`codex` → `/hooks`).
 For Claude desktop *Chat/Cowork*, restart the app and add to *Settings → Profile → Personal preferences*:
@@ -86,6 +87,7 @@ prompt ─► hook / MCP tool ─► jev_router/core.route()
 | Antigravity (CLI, desktop app) | `PreInvocation` + `Stop` hooks (prompt read from the transcript, injected once per turn) |
 | Claude desktop *Chat / Cowork* (no hooks there) | MCP tool `route_prompt` |
 | Claude Code on the web (cloud sandbox) | project hook with `--cloud-only` |
+| Scripts, other agents and projects (per sub-task) | `route` command via the shim `~/.jev-router/bin/route.py` |
 
 ### Model and effort are enforced, not suggested
 
@@ -134,6 +136,25 @@ indexed too, so the router can hand a skill of one tool to another ("read and fo
 Claude `#fable #sonnet #opus #codex #antigravity` · Codex / Antigravity `#fast #main #deep` ·
 `#norouter` / `#privat`: no routing, nothing is sent to TypeSafe (queue protection still applies).
 
+### Routing decision on demand
+
+The hooks route each user prompt. To get a decision for a single sub-task – from a script, another
+agent or another project – call the `route` command. It runs the same pipeline (`core.route()`) but
+has no side effects: no queue state, no log.
+
+```bash
+python ~/.jev-router/bin/route.py --json "add a pagination parameter to the quotes API endpoint"
+python install.py route [--provider claude|claude-chat|codex|antigravity] [--json] <text>   # no text: stdin
+```
+
+Without `--json` it prints the `[router] …` instruction. With `--json` it prints one object:
+`model` (e.g. `sonnet`; `null` when the tier answers in-session), `effort`, `agent` (the worker to
+delegate to, or `null`), `tier`, `task`, `difficulty`, `extra_agents`, `destructive`, `skill`,
+`verify`, `lang`, `backend`, `text` and `note`. A `#norouter` / `#privat` prompt is not routed
+(`model: null`, nothing is sent to TypeSafe). Exit codes: `0` success, `2` usage error (e.g. an
+empty prompt), `1` unexpected error (only the exception type goes to stderr). The installer writes
+the shim, so callers never need to know where the repository lives.
+
 ---
 
 ## 🎙️ Speech-to-Text
@@ -154,7 +175,7 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 | Setting | Where |
 | --- | --- |
 | JEV token | `python install.py --jev-token=<token>` or environment variable `TYPESAFE_API_KEY` |
-| Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `bin/` |
+| Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `bin/` (shims `run_hook.py`, `mcp_server.py`, `route.py`) |
 | Model catalog, tiers, routing table | `jev_router/config/models.json`, `targets.json`, `routes.json` |
 
 | Environment variable | Default | Meaning |
@@ -175,7 +196,7 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 install.py                 entry point: `python install.py [command]` (same as `python -m jev_router`)
 pyproject.toml             package metadata, console script `jev-router`, pytest settings
 jev_router/                the package
-├── cli.py                 installer commands: setup, detect, models, remote, skills, doctor, uninstall
+├── cli.py                 commands: setup, detect, models, remote, skills, doctor, uninstall, route
 ├── core.py                classification, decision, rendering, safety regex, JEV client + built-in classifier
 ├── lang.py                Hungarian / English detection
 ├── catalog.py             skill catalog and pre-filter
@@ -183,7 +204,7 @@ jev_router/                the package
 ├── queue_state.py         queue protection
 ├── mcp_server.py          MCP server: route_prompt, list_skills, get_skill (python -m jev_router.mcp_server)
 ├── hub.py                 shared skill folder, links, worker generation
-├── integrations.py        hook + MCP registration per tool
+├── integrations.py        hook + MCP registration per tool, ~/.jev-router/bin shims
 ├── platforms.py           OS abstraction (paths, links, executables, detection)
 ├── remote.py              optional remote access
 ├── doctor.py              health report

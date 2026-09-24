@@ -10,8 +10,12 @@
     python install.py skills [--apply]  re-link skills, regenerate workers, rebuild the catalog
     python install.py doctor          read-only health report
     python install.py uninstall       remove hooks, MCP entries and remote access (skills stay)
+    python install.py route [--provider claude] [--json] <prompt text...>
+                                      the routing decision for one prompt or sub-task (no text: read
+                                      stdin); side-effect free; exit 0 ok, 2 usage error, 1 error
 
-`python -m jev_router <command>` is equivalent.
+`python -m jev_router <command>` is equivalent. Other programs call the route command through
+the installer's shim: python ~/.jev-router/bin/route.py --json "<text>"
 
 Options: --providers=claude,codex,antigravity  --jev-token=<token>  --remote[=<name>]  --no-migrate
 
@@ -30,7 +34,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import doctor, hub, integrations, platforms as P, remote
+from . import core, doctor, hooks, hub, integrations, platforms as P, remote
 
 PKG = Path(__file__).resolve().parent
 REPO = PKG.parent
@@ -64,7 +68,7 @@ def parse_args(argv):
     return flags, positional
 
 
-COMMANDS = ("setup", "detect", "models", "remote", "skills", "doctor", "uninstall")
+COMMANDS = ("setup", "detect", "models", "remote", "skills", "doctor", "uninstall", "route")
 FLAGS, POSITIONAL, COMMAND, YES, DRY = {}, [], "setup", False, False
 
 
@@ -76,6 +80,9 @@ def configure(argv):
         sys.exit(0)
     FLAGS, POSITIONAL = parse_args(argv)
     COMMAND = POSITIONAL[0] if POSITIONAL else "setup"
+    if COMMAND == "route":  # main() dispatches `route` only as the first argument
+        print(f"route: must be the first argument\n{ROUTE_USAGE}", file=sys.stderr)
+        sys.exit(2)
     if COMMAND not in COMMANDS or len(POSITIONAL) > 1:
         sys.exit(f"Unknown command: {' '.join(POSITIONAL)}. Use one of: {', '.join(COMMANDS)} (quote names with spaces).")
     YES = "--yes" in FLAGS
@@ -265,8 +272,102 @@ def run_skills():
         say("\nDry run only. Re-run with --apply to write the changes.")
 
 
+# --- route: the decision as a side-effect-free query (for sub-tasks, other programs) ------------------------
+ROUTE_USAGE = "usage: python install.py route [--provider claude] [--json] [--] <prompt text...>   (no text: read stdin)"
+ROUTE_PROVIDERS = ALL + ("claude-chat",)
+ROUTE_KEYS = ("provider", "model", "effort", "agent", "tier", "task", "difficulty", "extra_agents", "destructive",
+              "skill", "verify", "lang", "backend", "text", "note")
+
+
+def parse_route_args(argv):
+    """(provider, as_json, prompt text or None when none was given), or None for --help.
+    Raises ValueError on a usage error; its message never echoes an option's value."""
+    provider, as_json, words, i = "claude", False, [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--":
+            words += argv[i + 1:]
+            break
+        if a in ("-h", "--help"):
+            return None
+        if a == "--json":
+            as_json = True
+        elif a == "--provider" or a.startswith("--provider="):
+            _, eq, provider = a.partition("=")
+            if not eq:
+                i += 1
+                provider = argv[i] if i < len(argv) else ""
+            if provider not in ROUTE_PROVIDERS:
+                raise ValueError(f"--provider must be one of: {', '.join(ROUTE_PROVIDERS)}")
+        elif a.startswith("--"):
+            raise ValueError(f"unknown option {a.partition('=')[0]}")
+        else:
+            words.append(a)
+        i += 1
+    return provider, as_json, (" ".join(words) if words else None)
+
+
+def read_stdin():
+    """The piped prompt ('' for an interactive terminal: never wait for typing). utf-8-sig: PowerShell
+    pipes can prepend a BOM."""
+    stream = sys.stdin
+    if stream is None or stream.isatty():
+        return ""
+    data = stream.buffer.read() if hasattr(stream, "buffer") else stream.read()
+    return data.decode("utf-8-sig", errors="replace") if isinstance(data, bytes) else data
+
+
+def route_decision(prompt, provider):
+    """The decision core.route() makes for the hooks, as a flat JSON-ready dict with ROUTE_KEYS.
+    No side effects: no queue state, no routing log. #norouter / #privat: not routed at all, and the
+    prompt never leaves this machine (only the local safety regex and language detection run)."""
+    out = dict.fromkeys(ROUTE_KEYS)
+    out.update(provider=provider, extra_agents=0, text="")
+    if any(tag in prompt.lower() for tag in hooks.SKIP_TAGS):
+        out.update(destructive=core.is_destructive(prompt), lang=core.lang.detect(prompt),
+                   note="#norouter / #privat: not routed, nothing sent to TypeSafe.")
+        return out
+    d, text, hit, error = core.route(prompt, provider)
+    out.update(model=d.get("target_model"), effort=d.get("effort"), agent=d.get("target_agent"), tier=d["primary"],
+               task=d["task"], difficulty=d["level"], extra_agents=d.get("extra_agents", 0), destructive=bool(hit),
+               skill=d.get("skill"), verify=d.get("verify") or None, lang=d["lang"], backend=d.get("backend"), text=text)
+    if error:  # only the exception type: its message could carry request details
+        out["note"] = f"JEV unavailable ({error.split(':', 1)[0]}); the built-in classifier decided."
+    return out
+
+
+def run_route(argv):
+    """`route` command. Exit codes: 0 success, 2 usage error, 1 unexpected error (type only on stderr)."""
+    try:
+        parsed = parse_route_args(argv)
+    except ValueError as exc:
+        print(f"route: {exc}\n{ROUTE_USAGE}", file=sys.stderr)
+        return 2
+    if parsed is None:
+        print(ROUTE_USAGE)
+        return 0
+    provider, as_json, prompt = parsed
+    try:
+        prompt = (read_stdin() if prompt is None else prompt).strip()
+        if not prompt:
+            print(f"route: empty prompt\n{ROUTE_USAGE}", file=sys.stderr)
+            return 2
+        result = route_decision(prompt, provider)
+        if as_json:
+            print(json.dumps(result))  # ASCII-escaped: safe for any console code page
+        elif result["text"]:
+            print(result["text"])
+    except Exception as exc:  # noqa: BLE001 - stable exit code; never print details (could hold secrets)
+        print(type(exc).__name__, file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv=None):
-    configure(sys.argv[1:] if argv is None else argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["route"]:  # before configure(): the prompt text is free-form
+        return run_route(argv[1:])
+    configure(argv)
     if COMMAND == "doctor":
         doctor.main()
         return 0

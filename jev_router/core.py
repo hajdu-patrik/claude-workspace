@@ -474,7 +474,8 @@ def extra_agents(ans, level):
 
 
 def resolve_tier(d, targets, models=None, session_model=None):
-    """(text, effort, model) for the decided tier.
+    """(text, effort, model, agent) for the decided tier. model is None when the tier answers
+    in-session (plain text); agent is the worker the text delegates to, None when the text names none.
 
     A tier in targets.json is plain text (answer in-session), or a spec
     {"model", "efforts", "agent", "text", "same_model_text", "slug"}. When JEV picked a model
@@ -488,7 +489,7 @@ def resolve_tier(d, targets, models=None, session_model=None):
     if chosen and targets.get("model_pick") and d["primary"] in targets.get("model_pick_tiers", []):
         spec = dict(targets["model_pick"], model=chosen)
     if isinstance(spec, str):
-        return spec, d.get("effort"), None
+        return spec, d.get("effort"), None, None
     model = spec.get("model", "")
     mdef = (models or {}).get(model)
     effort = d.get("effort")
@@ -500,15 +501,18 @@ def resolve_tier(d, targets, models=None, session_model=None):
     fields = {"model": model, "model_": model.replace(".", "_"), "effort": effort or "default", "slug": slug}
     fields["agent"] = spec.get("agent", "").format(**fields)
     template = spec.get("same_model_text") if session_model and session_model == model and spec.get("same_model_text") else spec.get("text", "")
-    return template.format(**fields), effort, model
+    agent = fields["agent"] if fields["agent"] and "{agent}" in template else None
+    return template.format(**fields), effort, model, agent
 
 
 def render(d, destructive_hit, targets, provider="claude", lang_code="hu", models=None, session_model=None):
     """The instruction text injected in front of the model's turn."""
-    text, effort, model = resolve_tier(d, targets, models, session_model)
+    text, effort, model, agent = resolve_tier(d, targets, models, session_model)
     d["effort"] = effort
     if model:
         d["target_model"] = model
+    if agent:
+        d["target_agent"] = agent
     parts = [f"[router] backend={d.get('backend', 'override')} task={d['task']} difficulty={d['level']} "
              f"conf={d['task_conf']} lang={lang_code}.", text]
     if effort and effort not in text:

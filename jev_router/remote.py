@@ -8,24 +8,32 @@ tool's own remote feature, started automatically at logon, under ONE machine nam
 What it sets up (only for tools that are installed):
   Claude       `claude remote-control --name <name>` kept running at logon
                (Windows: scheduled task, macOS: launchd agent, Linux: systemd --user service)
-  Antigravity  `agy remote-control start --name <name> --session` (the CLI registers its own autostart)
+  Antigravity  `agy remote-control start --name <name> --session` (the CLI registers its own autostart;
+               on Windows it is wrapped so it starts without a window)
   Codex        macOS/Linux: `codex remote-control start` (pair with `codex remote-control pair`);
-               Windows: the ChatGPT desktop app is started at logon and hosts the connection - the
-               Codex daemon cannot detach there when processes run inside a Job Object.
-The machine name is stored in ~/.jev-router/config.json, never in the repository.
+               Windows: `codex app-server --remote-control --listen off` kept running at logon by a
+               scheduled task - the `start` daemon cannot detach there, as every process (Explorer
+               included) runs inside a Job Object without breakaway permission.
+On Windows nothing opens a window: console programs run under `conhost.exe --headless`. The desktop
+apps are not started; opened by hand they work as usual. The machine name is stored in
+~/.jev-router/config.json, never in the repository.
 The computer must be on, awake and logged in for any of this to be reachable.
 """
+import base64
 import json
 import os
 import plistlib
 import time
+from pathlib import Path
 
 from . import platforms as P
 
 BIN = P.HOME / ".jev-router" / "bin"
+RUN_KEY = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+AGY_RUN_VALUE, TASK_ONCE = "AntigravityCliDaemon", "JevRouter-Setup"
 CONFIG = P.HOME / ".jev-router" / "config.json"
-TASK_CLAUDE, TASK_CHATGPT = "JevRouter-ClaudeRemote", "JevRouter-ChatGPT"
-LEGACY_TASKS = ("ClaudeRemoteControl", "ChatGPTAutostart", "CodexRemoteControl")
+TASK_CLAUDE, TASK_CODEX = "JevRouter-ClaudeRemote", "JevRouter-CodexRemote"
+LEGACY_TASKS = ("ClaudeRemoteControl", "ChatGPTAutostart", "CodexRemoteControl", "JevRouter-ChatGPT")
 LAUNCHD_LABEL = "com.jev-router.claude-remote"
 LAUNCHD = P.HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 LOG = P.HOME / ".jev-router" / "logs" / "claude-remote.log"
@@ -45,7 +53,71 @@ def _ps(script):
     return P.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], timeout=60)
 
 
+def _conhost():
+    """`conhost.exe --headless <program>` runs a console program in a console that is never shown -
+    not even handed to Windows Terminal, the default terminal on Windows 11 (a plain `cmd.exe` task
+    or Run entry opens a terminal window at every logon)."""
+    return str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "conhost.exe")
+
+
+def _hidden_ps(script):
+    """(execute, arguments) for a scheduled task that runs a PowerShell script without a window."""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    return _conhost(), f"--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+
+
+def _run_once(script):
+    """Run a PowerShell script through the Task Scheduler; returns the last line it outputs ("" if it
+    did not finish in 30 s). Needed for HKCU writes: a process in an MSIX container - e.g. a `python`
+    started through the Python Install Manager's alias, or anything run from a packaged app such as
+    the Claude desktop app - and its child processes only see a private copy of HKCU. Scheduled tasks
+    run outside it. The result goes through a file: conhost does not pass the exit code on."""
+    result = P.HOME / ".jev-router" / "state" / "setup-task.txt"
+    result.parent.mkdir(parents=True, exist_ok=True)
+    result.unlink(missing_ok=True)
+    literal = str(result).replace("'", "''")
+    exe, args = _hidden_ps(f"& {{ {script} }} | Select-Object -Last 1 | Set-Content -LiteralPath '{literal}'")
+    _ps(f'$a = New-ScheduledTaskAction -Execute "{exe}" -Argument "{args}"; '
+        f'Register-ScheduledTask -TaskName "{TASK_ONCE}" -Action $a -RunLevel Limited -Force | Out-Null; '
+        f'Start-ScheduledTask -TaskName "{TASK_ONCE}"')
+    for _ in range(60):
+        time.sleep(0.5)
+        if result.exists() and (out := result.read_text(encoding="utf-8", errors="replace").strip()):
+            break
+    else:
+        out = ""
+    _ps(f'Unregister-ScheduledTask -TaskName "{TASK_ONCE}" -Confirm:$false -ErrorAction SilentlyContinue')
+    result.unlink(missing_ok=True)
+    return out
+
+
+def _hide_agy_autostart():
+    """`agy remote-control start` registers `agy.exe remote-control serve` under HKCU\\...\\Run - a
+    console program, so every logon opened a terminal window. Prefix it with `conhost.exe --headless`.
+    True = done (or already done), False = the entry does not exist or could not be changed."""
+    return _run_once(
+        f"$k = '{RUN_KEY}'; $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}; "
+        "if (-not $v) { 'missing'; return }; "
+        f"if ($v -notlike '*--headless*') {{ Set-ItemProperty $k {AGY_RUN_VALUE} ('\"{_conhost()}\" --headless ' + $v) }}; "
+        f"if ((Get-ItemProperty $k).{AGY_RUN_VALUE} -like '*--headless*') {{ 'ok' }} else {{ 'failed' }}") == "ok"
+
+
+def _win_loop(task, script_name, workdir, command, kill):
+    """Keep `command` (a cmd.exe line) running from logon: a restart-after-30-s loop script run by a
+    scheduled task under `conhost.exe --headless`. `kill` (PowerShell condition on $_) matches a
+    previous instance's processes - the scheduler ignores Start while the old loop still runs."""
+    script = BIN / script_name
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(f'@echo off\ncd /d "{workdir}"\n:loop\n{command}\ntimeout /t 30 /nobreak >nul\ngoto loop\n',
+                      encoding="utf-8", newline="\r\n")
+    _ps(f'Stop-ScheduledTask -TaskName "{task}" -ErrorAction SilentlyContinue; '
+        f'Get-CimInstance Win32_Process | ? {{ ($_.Name -eq "cmd.exe" -and $_.CommandLine -match "{script_name}") -or ({kill}) }} '
+        '| % { Stop-Process -Id $_.ProcessId -Force }')
+    return _win_task(task, _conhost(), f'--headless cmd.exe /c "{script}"', str(workdir))
+
+
 def _win_task(name, execute, argument, workdir):
+    argument = argument.replace("'", "''")  # inside a single-quoted PowerShell string
     return _ps(
         f'$a = New-ScheduledTaskAction -Execute "{execute}" -Argument \'{argument}\' -WorkingDirectory "{workdir}"; '
         '$t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"; '
@@ -117,18 +189,11 @@ WantedBy=default.target
 
 def _setup_claude(name, claude, workdir):
     if P.IS_WINDOWS:
-        script = BIN / "claude-remote.cmd"
-        script.parent.mkdir(parents=True, exist_ok=True)
-        script.write_text(f'@echo off\r\ncd /d "{workdir}"\r\n:loop\r\n"{claude}" remote-control --name "{name}"\r\n'
-                          'timeout /t 30 /nobreak >nul\r\ngoto loop\r\n', encoding="utf-8")
         for legacy in LEGACY_TASKS:
             _ps(f'Unregister-ScheduledTask -TaskName "{legacy}" -Confirm:$false -ErrorAction SilentlyContinue')
-        # stop a previous instance first: the scheduler ignores Start while the old loop still runs
-        _ps(f'Stop-ScheduledTask -TaskName "{TASK_CLAUDE}" -ErrorAction SilentlyContinue; '
-            'Get-CimInstance Win32_Process | ? { ($_.Name -like "claude*.exe" -and $_.CommandLine -match " remote-control ") '
-            '-or ($_.Name -eq "cmd.exe" -and $_.CommandLine -match "claude-remote\\.cmd|start-rc\\.cmd") } '
-            '| % { Stop-Process -Id $_.ProcessId -Force }')
-        code, out = _win_task(TASK_CLAUDE, "cmd.exe", f'/c "{script}"', str(workdir))
+        code, out = _win_loop(TASK_CLAUDE, "claude-remote.cmd", workdir, f'"{claude}" remote-control --name "{name}"',
+                              '($_.Name -like "claude*.exe" -and $_.CommandLine -match " remote-control ") -or '
+                              '($_.Name -eq "cmd.exe" -and $_.CommandLine -match "start-rc\\.cmd")')
     elif P.IS_MAC:
         LAUNCHD.parent.mkdir(parents=True, exist_ok=True)
         LOG.parent.mkdir(parents=True, exist_ok=True)  # launchd does not create the log folder
@@ -170,17 +235,18 @@ def setup(name, providers, apply=True, workdir=None):
     if "antigravity" in providers and (agy := P.find_exe("agy")):
         P.run([agy, "remote-control", "stop"], timeout=60)
         code, out = P.run([agy, "remote-control", "start", "--name", name, "--session"], timeout=120)
-        report.append(("antigravity", code == 0, f"daemon \"{name}\" (antigravity.google.com)" if code == 0 else out[:200]))
+        hidden = "" if not P.IS_WINDOWS else ", starts hidden at logon" if _hide_agy_autostart() else \
+            ", autostart entry not found - it may open a terminal window at logon"
+        report.append(("antigravity", code == 0, f"daemon \"{name}\" (antigravity.google.com){hidden}" if code == 0 else out[:200]))
     if "codex" in providers:
-        if P.IS_WINDOWS:
-            code, aumid = _ps('$p = Get-AppxPackage OpenAI.Codex; if ($p) { $p.PackageFamilyName + "!App" }')
-            if aumid.strip():
-                code, out = _win_task(TASK_CHATGPT, "explorer.exe", f"shell:AppsFolder\\{aumid.strip()}", str(P.HOME))
-                report.append(("codex", code == 0, "ChatGPT app starts at logon; pair once: Settings > Connections > "
-                                                   "Control this PC > scan the QR code with the ChatGPT mobile app"))
-            else:
-                report.append(("codex", False, "ChatGPT desktop app not installed - it hosts Codex remote access on Windows"))
-        elif codex := P.find_exe("codex"):
+        if P.IS_WINDOWS and (codex := P.find_exe("codex")):
+            # one remote connection per computer: while the ChatGPT app holds it, this one retries
+            code, out = _win_loop(TASK_CODEX, "codex-remote.cmd", workdir,
+                                  f'call "{codex}" app-server --remote-control --listen off',
+                                  '$_.Name -in "codex.exe", "node.exe" -and $_.CommandLine -match "app-server --remote-control"')
+            report.append(("codex", code == 0, "remote app server runs hidden from logon; pair once: ChatGPT app > Settings > "
+                                               "Connections > Control this PC, or `codex remote-control pair`" if code == 0 else out[:200]))
+        elif not P.IS_WINDOWS and (codex := P.find_exe("codex")):
             code, out = P.run([codex, "remote-control", "start"], timeout=120)
             report.append(("codex", code == 0, "daemon started; pair a phone: codex remote-control pair" if code == 0 else out[:200]))
     return report
@@ -189,8 +255,9 @@ def setup(name, providers, apply=True, workdir=None):
 def remove():
     report = []
     if P.IS_WINDOWS:
-        for task in (TASK_CLAUDE, TASK_CHATGPT) + LEGACY_TASKS:
-            _ps(f'Unregister-ScheduledTask -TaskName "{task}" -Confirm:$false -ErrorAction SilentlyContinue')
+        for task in (TASK_CLAUDE, TASK_CODEX) + LEGACY_TASKS:
+            _ps(f'Stop-ScheduledTask -TaskName "{task}" -ErrorAction SilentlyContinue; '
+                f'Unregister-ScheduledTask -TaskName "{task}" -Confirm:$false -ErrorAction SilentlyContinue')
         report.append(("claude/codex", True, "scheduled tasks removed"))
     elif P.IS_MAC and LAUNCHD.exists():
         P.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"])  # ignore failure: may not be loaded
