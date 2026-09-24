@@ -23,6 +23,7 @@ import base64
 import json
 import os
 import plistlib
+import re
 import time
 from pathlib import Path
 
@@ -32,7 +33,7 @@ BIN = P.HOME / ".jev-router" / "bin"
 RUN_KEY = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 AGY_RUN_VALUE, TASK_ONCE = "AntigravityCliDaemon", "JevRouter-Setup"
 CONFIG = P.HOME / ".jev-router" / "config.json"
-TASK_CLAUDE, TASK_CODEX = "JevRouter-ClaudeRemote", "JevRouter-CodexRemote"
+TASK_CLAUDE, TASK_CODEX, TASK_WATCHDOG = "JevRouter-ClaudeRemote", "JevRouter-CodexRemote", "JevRouter-Watchdog"
 LEGACY_TASKS = ("ClaudeRemoteControl", "ChatGPTAutostart", "CodexRemoteControl", "JevRouter-ChatGPT")
 LAUNCHD_LABEL = "com.jev-router.claude-remote"
 LAUNCHD = P.HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
@@ -66,12 +67,12 @@ def _hidden_ps(script):
     return _conhost(), f"--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}"
 
 
-def _run_once(script):
+def _run_once(script, wait_s=30):
     """Run a PowerShell script through the Task Scheduler; returns the last line it outputs ("" if it
-    did not finish in 30 s). Needed for HKCU writes: a process in an MSIX container - e.g. a `python`
-    started through the Python Install Manager's alias, or anything run from a packaged app such as
-    the Claude desktop app - and its child processes only see a private copy of HKCU. Scheduled tasks
-    run outside it. The result goes through a file: conhost does not pass the exit code on."""
+    did not finish in `wait_s`). Needed for HKCU: a terminal inside a packaged (MSIX) app - e.g. the
+    Claude desktop app - and every process started from it only see the app's private copy of HKCU,
+    so a Run entry written there never takes effect at logon. Scheduled tasks run outside it.
+    The result goes through a file: conhost does not pass the exit code on."""
     result = P.HOME / ".jev-router" / "state" / "setup-task.txt"
     result.parent.mkdir(parents=True, exist_ok=True)
     result.unlink(missing_ok=True)
@@ -80,7 +81,7 @@ def _run_once(script):
     _ps(f'$a = New-ScheduledTaskAction -Execute "{exe}" -Argument "{args}"; '
         f'Register-ScheduledTask -TaskName "{TASK_ONCE}" -Action $a -RunLevel Limited -Force | Out-Null; '
         f'Start-ScheduledTask -TaskName "{TASK_ONCE}"')
-    for _ in range(60):
+    for _ in range(int(wait_s * 2)):
         time.sleep(0.5)
         if result.exists() and (out := result.read_text(encoding="utf-8", errors="replace").strip()):
             break
@@ -91,15 +92,65 @@ def _run_once(script):
     return out
 
 
-def _hide_agy_autostart():
-    """`agy remote-control start` registers `agy.exe remote-control serve` under HKCU\\...\\Run - a
-    console program, so every logon opened a terminal window. Prefix it with `conhost.exe --headless`.
-    True = done (or already done), False = the entry does not exist or could not be changed."""
-    return _run_once(
-        f"$k = '{RUN_KEY}'; $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}; "
-        "if (-not $v) { 'missing'; return }; "
-        f"if ($v -notlike '*--headless*') {{ Set-ItemProperty $k {AGY_RUN_VALUE} ('\"{_conhost()}\" --headless ' + $v) }}; "
-        f"if ((Get-ItemProperty $k).{AGY_RUN_VALUE} -like '*--headless*') {{ 'ok' }} else {{ 'failed' }}") == "ok"
+def _psq(value):
+    """A single-quoted PowerShell string literal."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+# Shared by setup and the watchdog: make the Antigravity autostart entry start without a window.
+# `agy remote-control start` registers `agy.exe remote-control serve` under HKCU\...\Run - a console
+# program, so every logon opened a terminal window; `conhost.exe --headless` in front of it hides it.
+_PS_WRAP_AGY = (f"$k = {_psq(RUN_KEY)}; $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}; "
+                f"if ($v -and $v -notlike '*--headless*') {{ $v = '\"' + $conhost + '\" --headless ' + $v; "
+                f"Set-ItemProperty $k {AGY_RUN_VALUE} $v }}")
+# (Re)start the daemon exactly as at logon: from the wrapped entry, so it has a hidden console. A daemon
+# without a console makes Windows open a terminal window for every console program it runs (hooks, MCP).
+_PS_RESTART_AGY = ("Get-CimInstance Win32_Process -Filter \"Name='agy.exe'\" | "
+                   "? { $_.CommandLine -match 'remote-control serve' } | % { Stop-Process -Id $_.ProcessId -Force }; "
+                   "Start-Process -FilePath $conhost -ArgumentList ('--headless ' + ($v -replace '^\"[^\"]+\" --headless ', ''))")
+
+
+def _setup_agy_windows(agy, name):
+    """Register the Antigravity daemon, hide its autostart entry and restart it hidden - all in a
+    scheduled task, outside any MSIX container (see _run_once). Returns (ok, message)."""
+    out = _run_once(
+        f"$conhost = {_psq(_conhost())}; $agy = {_psq(agy)}; "
+        "& $agy remote-control stop *> $null; "
+        f"$o = & $agy remote-control start --name {_psq(name)} --session 2>&1 | Out-String; "
+        "if ($LASTEXITCODE -ne 0) { 'error: ' + ($o -replace '\\s+', ' ').Trim(); return }; "
+        f"{_PS_WRAP_AGY}; "
+        "if (-not $v) { 'no autostart entry'; return }; "
+        f"{_PS_RESTART_AGY}; 'ok'", wait_s=120)
+    if out == "ok":
+        return True, f"daemon \"{name}\" (antigravity.google.com), starts hidden at logon"
+    return False, out or "no answer from the setup task within 2 minutes"
+
+
+def _watchdog_script():
+    """Runs at logon and every 30 minutes (task JevRouter-Watchdog): re-hides the Antigravity
+    autostart entry after an agy update rewrote it, restarts a daemon that is not running and
+    starts a remote task that is not running."""
+    return f"""# generated by jev-router's installer - keeps remote access running and windowless
+$ErrorActionPreference = 'SilentlyContinue'
+$conhost = {_psq(_conhost())}
+Start-Sleep -Seconds 60   # at logon: let the autostart entries and tasks start first
+{_PS_WRAP_AGY}
+if ($v -and -not (Get-CimInstance Win32_Process -Filter "Name='agy.exe'" | ? {{ $_.CommandLine -match 'remote-control serve' }})) {{
+    {_PS_RESTART_AGY}
+}}
+foreach ($t in {_psq(TASK_CLAUDE)}, {_psq(TASK_CODEX)}) {{
+    $s = Get-ScheduledTask -TaskName $t
+    if ($s -and $s.State -ne 'Running') {{ Start-ScheduledTask -TaskName $t }}
+}}
+"""
+
+
+def _setup_watchdog():
+    script = BIN / "remote-watchdog.ps1"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(_watchdog_script(), encoding="utf-8")
+    return _win_task(TASK_WATCHDOG, _conhost(), f'--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{script}"',
+                     str(P.HOME), repeat_min=30)
 
 
 def _win_loop(task, script_name, workdir, command, kill):
@@ -116,11 +167,13 @@ def _win_loop(task, script_name, workdir, command, kill):
     return _win_task(task, _conhost(), f'--headless cmd.exe /c "{script}"', str(workdir))
 
 
-def _win_task(name, execute, argument, workdir):
+def _win_task(name, execute, argument, workdir, repeat_min=None):
     argument = argument.replace("'", "''")  # inside a single-quoted PowerShell string
+    repeat = (f'$t.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) '
+              f'-RepetitionInterval (New-TimeSpan -Minutes {repeat_min})).Repetition; ') if repeat_min else ""
     return _ps(
         f'$a = New-ScheduledTaskAction -Execute "{execute}" -Argument \'{argument}\' -WorkingDirectory "{workdir}"; '
-        '$t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"; '
+        '$t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"; ' + repeat +
         '$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero); '
         f'Register-ScheduledTask -TaskName "{name}" -Action $a -Trigger $t -Settings $s -RunLevel Limited -Force | Out-Null; '
         f'Start-ScheduledTask -TaskName "{name}"')
@@ -233,11 +286,13 @@ def setup(name, providers, apply=True, workdir=None):
             ok, out = _setup_claude(name, claude, workdir)
             report.append(("claude", ok, f"Remote Control server \"{name}\" (sessions start in {workdir})" if ok else out[:200]))
     if "antigravity" in providers and (agy := P.find_exe("agy")):
-        P.run([agy, "remote-control", "stop"], timeout=60)
-        code, out = P.run([agy, "remote-control", "start", "--name", name, "--session"], timeout=120)
-        hidden = "" if not P.IS_WINDOWS else ", starts hidden at logon" if _hide_agy_autostart() else \
-            ", autostart entry not found - it may open a terminal window at logon"
-        report.append(("antigravity", code == 0, f"daemon \"{name}\" (antigravity.google.com){hidden}" if code == 0 else out[:200]))
+        if P.IS_WINDOWS:
+            ok, msg = _setup_agy_windows(agy, name)
+            report.append(("antigravity", ok, msg[:200]))
+        else:
+            P.run([agy, "remote-control", "stop"], timeout=60)
+            code, out = P.run([agy, "remote-control", "start", "--name", name, "--session"], timeout=120)
+            report.append(("antigravity", code == 0, f"daemon \"{name}\" (antigravity.google.com)" if code == 0 else out[:200]))
     if "codex" in providers:
         if P.IS_WINDOWS and (codex := P.find_exe("codex")):
             # one remote connection per computer: while the ChatGPT app holds it, this one retries
@@ -249,16 +304,84 @@ def setup(name, providers, apply=True, workdir=None):
         elif not P.IS_WINDOWS and (codex := P.find_exe("codex")):
             code, out = P.run([codex, "remote-control", "start"], timeout=120)
             report.append(("codex", code == 0, "daemon started; pair a phone: codex remote-control pair" if code == 0 else out[:200]))
+    if P.IS_WINDOWS and any(ok for _, ok, _ in report):
+        code, out = _setup_watchdog()
+        report.append(("watchdog", code == 0, "checks every 30 min and at logon that everything runs, windowless"
+                                              if code == 0 else out[:200]))
     return report
+
+
+def codex_connection(minutes=30):
+    """(ok, detail) from the newest Codex remote-control status in ~/.codex/logs_*.sqlite (written by
+    both the CLI server and the ChatGPT app); None when there is no recent entry."""
+    import sqlite3
+    dbs = sorted((P.HOME / ".codex").glob("logs_*.sqlite"), key=lambda p: p.stat().st_mtime)
+    if not dbs:
+        return None
+    try:
+        con = sqlite3.connect(f"file:{dbs[-1].as_posix()}?mode=ro", uri=True, timeout=2)
+        rows = con.execute("SELECT feedback_log_body FROM logs WHERE ts > ? AND target LIKE '%remote_control%' "
+                           "AND (feedback_log_body LIKE '%next_status=%' OR feedback_log_body LIKE '%failed to connect%') "
+                           "ORDER BY id DESC LIMIT 20", (int(time.time()) - minutes * 60,)).fetchall()
+        con.close()
+    except sqlite3.Error:
+        return None
+    states = [s for (body,) in rows for s in re.findall(r"next_status=(\w+)", body)]
+    if "Connected" in states[:3]:
+        return True, "connected"
+    if any("already online" in body for (body,) in rows):
+        return True, "another process on this computer holds the connection (e.g. the ChatGPT app) - this one waits"
+    if states:
+        return False, f"status: {states[0]}"
+    return None
+
+
+def status():
+    """Read-only (tool, ok, detail) lines for `doctor`. On Windows the real autostart entry is read
+    through a short-lived scheduled task (a terminal inside a packaged app only sees a private copy)."""
+    lines = []
+    if not P.IS_WINDOWS:
+        service = LAUNCHD if P.IS_MAC else SYSTEMD
+        lines.append(("claude", service.exists(), str(service) if service.exists() else "not set up"))
+        return lines
+    code, out = _ps('Get-ScheduledTask -TaskName "JevRouter-*" | % { $_.TaskName + "=" + $_.State }')
+    tasks = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+    code, out = _ps('Get-CimInstance Win32_Process | ? { $_.CommandLine -match "remote-control|app-server --remote-control" } '
+                    '| % { $_.Name + "|" + $_.CommandLine }')
+    procs = out.lower()
+    for tool, task, marker in (("claude", TASK_CLAUDE, " remote-control --name"), ("codex", TASK_CODEX, "app-server --remote-control")):
+        if task in tasks:
+            running = tasks[task] == "Running" and marker in procs
+            lines.append((tool, running, f"task {task}: {tasks[task]}, server {'running' if marker in procs else 'NOT running'}"))
+    if TASK_CODEX in tasks:
+        codex = P.find_exe("codex")
+        flag = codex and P.run([codex, "app-server", "--remote-control", "--listen", "off", "--help"], timeout=60)[0] == 0
+        lines.append(("codex", bool(flag), "`app-server --remote-control` supported" if flag else
+                      "this Codex version no longer accepts `app-server --remote-control` - see docs/remote-access.md"))
+        conn = codex_connection()
+        lines.append(("codex", conn[0], f"remote connection: {conn[1]}") if conn else
+                     ("codex", False, "no remote-control activity in the Codex log in the last 30 minutes"))
+    if P.find_exe("agy"):
+        entry = _run_once(f"(Get-ItemProperty {_psq(RUN_KEY)} -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}")
+        serve = "remote-control serve" in procs
+        lines.append(("antigravity", bool(entry) and "--headless" in entry and serve,
+                      f"daemon {'running' if serve else 'NOT running'}, autostart "
+                      + ("hidden" if "--headless" in entry else "opens a window" if entry else "not registered")))
+    lines.append(("watchdog", TASK_WATCHDOG in tasks, f"task {TASK_WATCHDOG}: {tasks.get(TASK_WATCHDOG, 'missing')}"))
+    return lines
 
 
 def remove():
     report = []
     if P.IS_WINDOWS:
-        for task in (TASK_CLAUDE, TASK_CODEX) + LEGACY_TASKS:
+        for task in (TASK_WATCHDOG, TASK_CLAUDE, TASK_CODEX) + LEGACY_TASKS:
             _ps(f'Stop-ScheduledTask -TaskName "{task}" -ErrorAction SilentlyContinue; '
                 f'Unregister-ScheduledTask -TaskName "{task}" -Confirm:$false -ErrorAction SilentlyContinue')
-        report.append(("claude/codex", True, "scheduled tasks removed"))
+        _ps('Get-CimInstance Win32_Process | ? { ($_.Name -eq "cmd.exe" -and $_.CommandLine -match "(claude|codex)-remote\\.cmd") '
+            '-or ($_.Name -like "claude*.exe" -and $_.CommandLine -match " remote-control ") '
+            '-or ($_.Name -in "codex.exe", "node.exe" -and $_.CommandLine -match "app-server --remote-control") } '
+            '| % { Stop-Process -Id $_.ProcessId -Force }')
+        report.append(("claude/codex", True, "scheduled tasks removed, servers stopped"))
     elif P.IS_MAC and LAUNCHD.exists():
         P.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"])  # ignore failure: may not be loaded
         LAUNCHD.unlink()
@@ -269,7 +392,10 @@ def remove():
         P.run(["systemctl", "--user", "daemon-reload"])
         report.append(("claude", True, "systemd user service removed"))
     if agy := P.find_exe("agy"):
-        P.run([agy, "remote-control", "stop"], timeout=60)
+        if P.IS_WINDOWS:  # outside any MSIX container, so the real autostart entry is removed
+            _run_once(f"& {_psq(agy)} remote-control stop *> $null; 'ok'", wait_s=60)
+        else:
+            P.run([agy, "remote-control", "stop"], timeout=60)
         report.append(("antigravity", True, "daemon stopped"))
     if not P.IS_WINDOWS and (codex := P.find_exe("codex")):
         P.run([codex, "remote-control", "stop"], timeout=60)

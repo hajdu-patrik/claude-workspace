@@ -17,6 +17,13 @@ dates are ISO 8601.
 - `~/.jev-router/bin/route.py` shim, written by the installer next to the hook and MCP shims, so
   other projects can run `python ~/.jev-router/bin/route.py --json "<text>"` without knowing where
   the repository lives.
+- `doctor` checks remote access (tasks, servers, the Antigravity autostart entry, the Codex remote
+  connection and whether this Codex version still accepts `app-server --remote-control`) and that
+  the Python interpreter the hooks and MCP entries point at still exists.
+- Windows watchdog task `JevRouter-Watchdog` (at logon and every 30 minutes): re-hides the
+  Antigravity autostart entry after an agy update rewrote it and restarts anything not running.
+- The installer warns when it changes the Claude desktop config while the app runs – the app
+  rewrites the file from memory, so the app has to be restarted.
 
 ### Changed
 - The routing log records the worker a decision delegates to (`target_agent`).
@@ -31,9 +38,12 @@ dates are ISO 8601.
 - Windows: the MCP server is registered with `pythonw.exe` – a host without a console (the
   detached Antigravity remote daemon) opened a terminal window for `python.exe`.
 - The loop scripts in `~/.jev-router/bin` were written with `\r\r\n` line endings.
-- Registry changes are made through a one-shot scheduled task, so they also take effect when the
-  installer runs inside an MSIX container (e.g. `python` from the Python Install Manager's alias),
-  whose HKCU writes would otherwise only land in a private copy.
+- Windows: registry changes and the Antigravity setup run in a one-shot scheduled task, so they take
+  effect even when the installer runs in a terminal of a packaged (MSIX) app such as the Claude
+  desktop app, where HKCU writes only land in the app's private copy.
+- Windows: the Antigravity daemon started by the installer is restarted from its (hidden)
+  autostart entry – started detached it had no console, so every hook or MCP server it ran
+  opened a terminal window.
 
 ## [3.1.0] – 2026-09-24 · Standard package layout
 

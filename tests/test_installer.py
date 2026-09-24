@@ -205,3 +205,53 @@ def test_windows_remote_loops_run_headless(tmp_path, monkeypatch):
     assert "conhost.exe" in calls[1] and "--headless cmd.exe /c" in calls[1] and "-AtLogOn" in calls[1]
     exe, args = remote._hidden_ps("'ok'")
     assert exe.lower().endswith("conhost.exe") and args.startswith("--headless powershell.exe")
+
+
+def test_agy_setup_and_watchdog_scripts(monkeypatch):
+    """Antigravity is registered, wrapped and restarted in one scheduled task (outside any MSIX
+    container); the watchdog re-wraps the entry, restarts a missing daemon and idle remote tasks."""
+    from jev_router import remote
+    seen = []
+    monkeypatch.setattr(remote, "_run_once", lambda script, wait_s=30: seen.append(script) or "ok")
+    ok, msg = remote._setup_agy_windows(r"C:\agy\agy.exe", "Bob's PC")
+    s = seen[0]
+    assert ok and "starts hidden" in msg
+    assert "'Bob''s PC'" in s and s.index("remote-control stop") < s.index("remote-control start") < s.index("--headless")
+    assert "Stop-Process" in s and "Start-Process -FilePath $conhost" in s
+    w = remote._watchdog_script()
+    assert "Start-Sleep" in w and "AntigravityCliDaemon" in w and "Start-ScheduledTask" in w
+    assert remote.TASK_CLAUDE in w and remote.TASK_CODEX in w
+
+
+def test_codex_connection_from_log(tmp_path, monkeypatch):
+    import sqlite3
+    import time
+    from jev_router import remote
+    monkeypatch.setattr(P, "HOME", tmp_path)
+    monkeypatch.setattr(remote.P, "HOME", tmp_path)
+    (tmp_path / ".codex").mkdir()
+    assert remote.codex_connection() is None
+    con = sqlite3.connect(tmp_path / ".codex" / "logs_2.sqlite")
+    con.execute("CREATE TABLE logs (id INTEGER PRIMARY KEY, ts INTEGER, target TEXT, feedback_log_body TEXT)")
+    t = "codex_app_server_transport::transport::remote_control::websocket"
+    con.execute("INSERT INTO logs (ts, target, feedback_log_body) VALUES (?, ?, ?)",
+                (int(time.time()), t, 'failed to connect: 409 Conflict {"detail":"Remote app server already online"}'))
+    con.commit()
+    ok, detail = remote.codex_connection()
+    assert ok and "holds the connection" in detail
+    con.execute("INSERT INTO logs (ts, target, feedback_log_body) VALUES (?, ?, ?)",
+                (int(time.time()), t, "status changed previous_status=Connecting next_status=Connected"))
+    con.commit()
+    con.close()
+    assert remote.codex_connection() == (True, "connected")
+
+
+def test_doctor_lists_hook_and_mcp_interpreters(tmp_path, monkeypatch):
+    from jev_router import doctor
+    monkeypatch.setattr(P, "PATHS", {**P.PATHS, "agy_mcp": tmp_path / "mcp.json"})
+    monkeypatch.setattr(P, "claude_desktop_config", lambda: tmp_path / "none.json")
+    (tmp_path / "mcp.json").write_text(json.dumps({"mcpServers": {"jev-router": {"command": "/opt/py/pythonw", "args": []}}}))
+    settings = {"hooks": {"UserPromptSubmit": [{"hooks": [{"command": "/usr/bin/python3 ~/.jev-router/bin/run_hook.py claude x"}]}]}}
+    toml = '[mcp_servers.jev-router]\ncommand = "/opt/py/python"\nargs = []\n'
+    assert doctor.interpreters(settings, toml) == [("Claude hook", "/usr/bin/python3"), ("Antigravity MCP", "/opt/py/pythonw"),
+                                                   ("Codex MCP", "/opt/py/python")]

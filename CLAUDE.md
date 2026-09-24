@@ -32,6 +32,16 @@ details or absolute user paths. Per-user state belongs in `~/.jev-router/`, neve
   `config/models.json` (`python install.py skills --apply`) – edit the sources, never the generated files.
 - Installers are idempotent and dry-run by default; changed user config files get a `.bak` copy.
 
+## Git
+
+- One branch: `main`. No feature branches, worktrees or stashes that outlive a session – finished
+  work is committed and pushed to `main` right away.
+- Several sessions may work in this checkout at once (`CONCURRENCY:` in the context). Before
+  committing, check `git status` / `git diff` for changes that are not yours: leave them unstaged and
+  say so, unless the user asks to commit everything together. `git pull --rebase` before `git push`.
+- Never discard or overwrite another session's uncommitted changes (`git checkout -- <file>`,
+  `git reset --hard`, `git stash`).
+
 ## Checks before committing
 
 ```bash

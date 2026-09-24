@@ -124,6 +124,14 @@ def python_exe():
     return exe
 
 
+def app_running(name):
+    """True if a process named `name` (Windows: `name.exe`, macOS/Linux: exact process name) runs."""
+    if IS_WINDOWS:
+        code, out = run(["tasklist", "/FI", f"IMAGENAME eq {name}.exe", "/FO", "CSV", "/NH"])
+        return code == 0 and f'"{name.lower()}.exe"' in out.lower()
+    return run(["pgrep", "-x", name])[0] == 0
+
+
 def python_exe_windowless():
     """Interpreter for stdio servers (MCP): pythonw.exe on Windows. A host that runs without a
     console (e.g. a detached background daemon) would otherwise open a terminal window for

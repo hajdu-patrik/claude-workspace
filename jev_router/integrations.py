@@ -168,6 +168,16 @@ def codex_mcp(path, w, uninstall=False):
     w.write(path, new, "codex MCP")
 
 
+def claude_desktop_mcp(w, uninstall=False):
+    """The Claude desktop app keeps its config in memory and rewrites the file from it: a change made
+    while the app runs is lost at its next save unless the app is restarted first."""
+    before = w.changes
+    json_mcp(P.claude_desktop_config(), "claude desktop MCP (Chat/Cowork)", w, uninstall)
+    if w.changes > before and P.app_running("Claude"):
+        print("[!!]  The Claude desktop app is running: quit it completely (tray icon > Quit) and reopen it, "
+              "or it overwrites this change")
+
+
 def install_shims(w):
     """Writes the ~/.jev-router/bin shims and nothing else (dry run and .bak handling: Writer)."""
     w.write(SHIM_HOOK, shim("jev_router.hooks"), "hook shim")
@@ -183,7 +193,7 @@ def install(providers=ALL, apply=False, uninstall=False):
     steps = []
     if "claude" in providers:
         steps += [lambda: claude_codex_hooks(P.PATHS["claude_settings"], "claude", w, uninstall),
-                  lambda: json_mcp(P.claude_desktop_config(), "claude desktop MCP (Chat/Cowork)", w, uninstall)]
+                  lambda: claude_desktop_mcp(w, uninstall)]
     if "codex" in providers:
         steps += [lambda: claude_codex_hooks(P.PATHS["codex_hooks"], "codex", w, uninstall),
                   lambda: codex_mcp(P.PATHS["codex_config"], w, uninstall)]

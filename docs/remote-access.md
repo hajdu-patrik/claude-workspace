@@ -31,6 +31,17 @@ autostart entry opens one in Windows Terminal, the default terminal on Windows 1
 also wraps Antigravity's own autostart entry this way. The desktop apps (Claude, ChatGPT,
 Antigravity) are not started – open them whenever you like, they work as usual.
 
+**Checking and self-repair.** `python install.py doctor` shows whether every task and server runs,
+whether the Antigravity autostart entry is hidden, the Codex remote connection state and whether
+the installed Codex still accepts `app-server --remote-control` (an experimental flag). On Windows
+the task `JevRouter-Watchdog` runs at logon and every 30 minutes: it re-hides the Antigravity
+autostart entry after an agy update rewrote it, and restarts a daemon or remote task that is not
+running.
+
+**Packaged apps (Windows).** A terminal inside a packaged app – for example the Claude desktop app's
+Code tab – only sees the app's private copy of the registry. The installer therefore makes registry
+changes and registers Antigravity in a short-lived scheduled task, which runs outside the app.
+
 ### One-time pairing for Codex
 
 - **Windows:** ChatGPT desktop app → Settings → **Connections** → turn on *Control this PC* → scan

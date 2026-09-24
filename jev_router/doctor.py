@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Read-only health report: installed tools and logins, hooks, MCP registrations, skill hub, agents,
-configuration and recent router activity. Changes nothing.   Usage: python install.py doctor
+configuration, remote access and recent router activity. Changes nothing (on Windows the real
+autostart entry is read through a short-lived scheduled task).   Usage: python install.py doctor
 """
 import json
 import os
+import re
 from pathlib import Path
 
-from . import platforms as P
+from . import platforms as P, remote
 
 HOME = P.HOME
 
@@ -26,6 +28,25 @@ def has_hook(cfg, event):
     return any("jev-router" in json.dumps(g) for g in (cfg or {}).get("hooks", {}).get(event, []))
 
 
+def interpreters(claude_settings, codex_toml):
+    """(label, interpreter path) of every registered hook / MCP command. The paths point at one
+    Python installation; an update that removes it silently stops every hook."""
+    found = []
+    hook = next((h.get("command", "") for g in (claude_settings or {}).get("hooks", {}).get("UserPromptSubmit", [])
+                 for h in g.get("hooks", []) if "jev-router" in h.get("command", "")), "")
+    if hook:
+        m = re.match(r'\s*"([^"]+)"|\s*\'([^\']+)\'|\s*(\S+)', hook)
+        found.append(("Claude hook", next(g for g in m.groups() if g)))
+    for label, cfg in (("Antigravity MCP", jload(P.PATHS["agy_mcp"])), ("Claude desktop MCP", jload(P.claude_desktop_config()))):
+        cmd = ((cfg or {}).get("mcpServers", {}).get("jev-router") or {}).get("command")
+        if cmd:
+            found.append((label, cmd))
+    m = re.search(r'\[mcp_servers\.jev-router\]\ncommand = "([^"]+)"', codex_toml or "")
+    if m:
+        found.append(("Codex MCP", m.group(1)))
+    return found
+
+
 def main():
     print("== Tools")
     for info in P.detect(deep=False).values():
@@ -41,7 +62,9 @@ def main():
     line("PreInvocation" in agy and "Stop" in agy, "Antigravity PreInvocation + Stop")
 
     print("\n== MCP router (hook-less modes)")
-    line("jev-router" in json.dumps(jload(P.claude_desktop_config()) or {}), "Claude desktop (Chat/Cowork)")
+    ok = "jev-router" in json.dumps(jload(P.claude_desktop_config()) or {})
+    line(ok, "Claude desktop (Chat/Cowork)", "" if ok else "missing - the app rewrites its config from memory: "
+         "close the Claude app, run python install.py --yes, reopen it")
     cfg_toml = P.PATHS["codex_config"].read_text(encoding="utf-8") if P.PATHS["codex_config"].exists() else ""
     line("[mcp_servers.jev-router]" in cfg_toml, "Codex")
     line("jev-router" in json.dumps(jload(P.PATHS["agy_mcp"]) or {}), "Antigravity")
@@ -68,6 +91,16 @@ def main():
     line(True, "Remote access name", cfg.get("remote_name") or "not set up (python install.py remote)")
     line(True, "Per-account model overrides", "yes" if (HOME / ".jev-router" / "models.local.json").exists()
          else "no (python install.py models --probe)")
+
+    print("\n== Interpreter used by hooks and MCP")
+    for label, exe in interpreters(cs, cfg_toml):
+        line(Path(exe).is_file(), label, exe if Path(exe).is_file() else
+             f"{exe} is gone (Python updated or removed?) - re-run: python install.py --yes")
+
+    if cfg.get("remote_name"):
+        print(f"\n== Remote access \"{cfg['remote_name']}\"")
+        for tool, ok, detail in remote.status():
+            line(ok, tool, detail)
 
     print("\n== Router activity (~/.jev-router/logs/routing.jsonl)")
     log = HOME / ".jev-router" / "logs" / "routing.jsonl"
