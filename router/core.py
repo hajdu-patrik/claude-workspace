@@ -129,9 +129,53 @@ LOCAL_HARD_RE = (r"(egesz|teljes|osszes) (kodbazis|repo|projekt|rendszer|alkalma
                  r"\bnehez|bonyolult|reszletes|mikroszolgaltatas|migral|optimaliz|hexagonal|\d{2,}\s*oldal|"
                  r"tobb (fajl|modul)|bizonyits|\bentire\b|\bwhole\b|\barchitecture\b|\bcomplex\b|\bdetailed\b|"
                  r"microservice|\bmigrate\b|\bmigration\b|optimi[sz]e|\d{2,}\s*pages?|multiple (files|modules)|"
-                 r"\bprove\b|\bproof\b|from scratch|nulladrol|end-to-end|\be2e\b|security audit|biztonsagi audit")
+                 r"\bprove\b|\bproof\b|from scratch|nulladrol|semmibol|end-to-end|\be2e\b|security audit|biztonsagi audit")
 LOCAL_LONG_RE = (r"\d{2,}\s*oldal|(egesz|teljes|osszes) (kodbazis|repo|projekt|konyv|fajl)|"
                  r"\d{2,}\s*pages?|(entire|whole|full) (codebase|repo|project|book|file)")
+
+
+# --- Parallel agents (token budget!) -------------------------------------------------------------
+# How many EXTRA agents may run in parallel next to the primary worker. Every extra agent multiplies
+# token usage, so this is deliberately strict: 0 is the answer for the vast majority of requests.
+MAX_EXTRA_AGENTS = int(os.environ.get("ROUTER_MAX_EXTRA_AGENTS", "4"))
+AGENTS_MIN_CONF = 0.7  # fixed and strict, independent of ROUTER_MIN_CONFIDENCE: below it, one agent fewer
+AGENT_CRITERIA = {
+    "0": "DEFAULT - choose this for the vast majority of requests. One agent does the whole job: questions, "
+         "explanations, a bug fix, a feature in one area, a test file, a document, a refactor of one module.",
+    "1": "+1 extra agent: the task has two clearly independent, substantial parts that gain real time in parallel "
+         "(e.g. implement a feature AND independently write its test suite, or research AND implement).",
+    "2": "+2 extra agents: a genuinely complex task with three independent substantial workstreams "
+         "(e.g. backend change + frontend change + database migration for one feature).",
+    "3": "+3 extra agents: building a complete new page/product feature FROM SCRATCH with backend + frontend + "
+         "data layer/tests.",
+    "4": "+4 extra agents: very rare - only an exceptionally large from-scratch build that ALSO requires writing "
+         "extra tooling first (e.g. a scraper/crawler or custom tools) on top of backend + frontend.",
+}
+_STREAMS = {
+    "backend": r"\bbackend|\bapi\b|endpoint|vegpont|\bserver\b|szerver|\bservice\b|szolgaltatas",
+    "frontend": r"\bfrontend|\bui\b|felulet|\bpage\b|\boldal\b|oldalt|\breact\b|\bvue\b|\bcomponent|komponens",
+    "data": r"adatbazis|\bdatabase\b|\bdb\b|migrac|migration|\bschema\b|\bsema\b",
+    "tests": r"\btest|\bteszt",
+    "tooling": r"scraper|scrape|crawler|\btool(s|ing)?\b|eszkoz|\bparser\b",
+}
+_FROM_SCRATCH = r"from scratch|semmibol|nulladrol|\bnew (page|site|app|feature)\b|uj (oldal|oldalt|alkalmazas|appot)|teljes (oldal|oldalt)"
+
+
+def local_agents_answer(t, level):
+    """Mock of JEV's parallel-agent question - strict on purpose (t: normalized prompt)."""
+    if level < 2:
+        return {"choice": "0", "confidence": 0.9}
+    streams = {k for k, p in _STREAMS.items() if re.search(p, t)}
+    extra = 0
+    if len(streams) >= 2:
+        extra = 1
+    if len(streams) >= 3:
+        extra = 2
+    if re.search(_FROM_SCRATCH, t) and {"backend", "frontend"} <= streams:
+        extra = 3
+        if "tooling" in streams:
+            extra = 4
+    return {"choice": str(extra), "confidence": 0.75}
 
 
 def local_answers(prompt):
@@ -156,6 +200,7 @@ def local_answers(prompt):
         "long_context": {"noul": 0.8 if re.search(LOCAL_LONG_RE, t) else 0.1},
         "needs_web": {"noul": 0.8 if task == "research" else 0.1},
         "destructive": {"noul": 0.9 if is_destructive(prompt) else 0.05},
+        "agents": local_agents_answer(t, level),
     }
 
 
@@ -246,6 +291,10 @@ def build_questions(skills, effort=None, models=None):
         "needs_web": {"type": "noul", "instructions": "Answering requires up-to-date information from the internet"},
         "destructive": {"type": "noul",
                         "instructions": "The request asks to delete data, send a message to someone, publish something, or spend money"},
+        "agents": {"type": "choice",
+                   "instructions": "How many EXTRA agents should work in parallel next to the main one? Be very strict: "
+                                   "every extra agent multiplies token usage. When in doubt, choose the lower number.",
+                   "criteria": {k: v for k, v in AGENT_CRITERIA.items() if int(k) <= MAX_EXTRA_AGENTS}},
     }
     if skills:
         criteria = dict(skills)
@@ -382,7 +431,24 @@ def decide(answers, routes, skills_by_name=None):
     m = answers.get("model")
     if m and float(m.get("confidence", 0)) >= MIN_CONF:
         result["model"] = m["choice"]  # JEV's explicit model pick (validated in classify)
+    result["extra_agents"] = extra_agents(answers.get("agents"), level)
     return result
+
+
+def extra_agents(ans, level):
+    """Strict clamp of the parallel-agent answer: 0..MAX_EXTRA_AGENTS, one step lower when the answer
+    is not confident, and never more than 1 extra for a request below the 'hard' difficulty level."""
+    if not ans:
+        return 0
+    try:
+        n = int(str(ans.get("choice", "0")).lstrip("+"))
+    except ValueError:
+        return 0
+    if float(ans.get("confidence", 0)) < AGENTS_MIN_CONF:
+        n -= 1
+    if level < 2:
+        n = min(n, 1)
+    return max(0, min(n, MAX_EXTRA_AGENTS))
 
 
 def resolve_tier(d, targets, models=None, session_model=None):
@@ -425,6 +491,12 @@ def render(d, destructive_hit, targets, provider="claude", lang_code="hu", model
              f"conf={d['task_conf']} lang={lang_code}.", text]
     if effort and effort not in text:
         parts.append(f"Reasoning effort: {effort}.")
+    n = d.get("extra_agents", 0)
+    if n:
+        parts.append(f"Parallelism: up to {n} extra agent(s) may run in parallel (same model and effort as above), "
+                     f"only for genuinely independent parts; split the work, then merge and verify the results.")
+    elif d.get("task") != "override":
+        parts.append("Parallelism: none - no extra parallel agents.")
     if d.get("verify") in targets.get("verify", {}):
         parts.append(targets["verify"][d["verify"]])
     if d.get("skill"):

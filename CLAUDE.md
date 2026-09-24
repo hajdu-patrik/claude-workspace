@@ -6,6 +6,8 @@ Respond in the language of the user's prompt (Hungarian or English); the `[route
 - Every prompt comes with a `[router]` context (from the global UserPromptSubmit hook, see
   `router/`). Follow it: if it names a subagent (e.g. `opus-worker-xhigh`), delegate to it; if it
   names a skill, use it; if it names the `cli-bridge` skill, use that.
+- `Parallelism:` line in the router context = the max number of EXTRA parallel agents (0-4,
+  strict token budget). "none" means do not fan out.
 - The router is a suggestion. If it's clearly wrong (e.g. sends a trivial question to Opus), you
   may decide otherwise, but say why in one line.
 - If SAFETY appears in the context: list the exact actions, and only carry them out after an

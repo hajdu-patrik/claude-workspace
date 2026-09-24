@@ -114,10 +114,28 @@ Policy check: `python scripts/check_models.py`.
 Overrides: Claude `#fable #sonnet #opus #codex #antigravity`; Codex/Antigravity `#fast #main #deep`;
 `#norouter` / `#privat` = no routing, nothing sent to TypeSafe.
 
+## Parallel agents (token budget)
+
+JEV also answers *how many EXTRA agents may run in parallel* next to the main one – deliberately
+strict, because every extra agent multiplies token usage (`core.AGENT_CRITERIA`):
+
+| Extra | When |
+|---|---|
+| **0** | default – the vast majority of requests (questions, fixes, one-area features, refactors) |
+| **+1** | two clearly independent, substantial parts (e.g. implement + separate test suite) |
+| **+2** | three independent workstreams (backend + frontend + DB migration) |
+| **+3** | a complete new page/feature from scratch (backend + frontend + data layer) |
+| **+4** | very rare: a from-scratch build that also needs new tooling first (scraper/custom tools) |
+
+Code-level clamps on top of JEV's answer: one fewer when its confidence is below 0.7, at most +1
+unless the request is rated hard, never above `ROUTER_MAX_EXTRA_AGENTS` (default 4). The context
+line reads `Parallelism: none …` or `Parallelism: up to N extra agent(s) …`. On the 200 eval
+prompts the mock gives 0 for all of them.
+
 ## Testing
 
 ```powershell
-python -m pytest tests -q          # 70 unit tests: language, safety regex (hits + false positives), classifier,
+python -m pytest tests -q          # 78 unit tests: language, safety regex (hits + false positives), classifier,
                                    # effort clamp, per-provider routing, hook I/O for all 3 tools, MCP protocol
 python eval/eval_router.py         # full pipeline on 100 HU + 100 EN prompts, exit 1 if a target is missed
 ```

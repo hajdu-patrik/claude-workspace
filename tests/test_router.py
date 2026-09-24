@@ -298,3 +298,29 @@ def test_local_skill_pick_needs_name_evidence():
     assert pick("What does overfitting mean in machine learning?") is None  # short everyday name
     assert pick("use the learn skill to save this lesson")[0] == "anthropic-skills:learn"  # explicit
     assert pick("Írj egy PDF-et és egy pptx prezentációt")[0] == "anthropic-skills:pptx"   # format name + glossary
+
+
+# --- parallel agents (strict: token budget) ------------------------------------------------------
+@pytest.mark.parametrize("text,expected", [
+    ("Mi Magyarország fővárosa?", 0),
+    ("Fix the bug in the login function", 0),
+    ("Refaktoráld az egész auth modult hexagonális architektúrára", 0),                     # hard, one area
+    ("Write the backend endpoint and the complete test suite for the entire payment flow", 1),
+    ("Migrate the whole backend API, the React frontend and the database schema to the new auth", 2),
+    ("Készíts egy teljes új oldalt semmiből: backend API, React frontend és adatbázis séma", 3),
+    ("Build a complete new page from scratch: backend, frontend, and write a scraper tool for the product data", 4),
+])
+def test_extra_agents_mock(text, expected):
+    d, text_out, _, _ = core.route(text, "claude")
+    assert d["extra_agents"] == expected, text
+    assert ("Parallelism: none" in text_out) == (expected == 0)
+
+
+def test_extra_agents_strict_clamps():
+    assert core.extra_agents({"choice": "4", "confidence": 0.95}, 2) == 4
+    assert core.extra_agents({"choice": "4", "confidence": 0.5}, 2) == 3        # unsure -> one lower
+    assert core.extra_agents({"choice": "3", "confidence": 0.95}, 1) == 1       # not hard -> at most +1
+    assert core.extra_agents({"choice": "9", "confidence": 0.95}, 2) == 4       # never above the cap
+    assert core.extra_agents({"choice": "x"}, 2) == 0 and core.extra_agents(None, 2) == 0
+    q = core.build_questions({})
+    assert list(q["agents"]["criteria"]) == ["0", "1", "2", "3", "4"] and "strict" in q["agents"]["instructions"]
