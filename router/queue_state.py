@@ -11,15 +11,25 @@ tracks work in flight and turns it into explicit context:
       if ANOTHER session is working in the same folder     -> "CONCURRENCY: ... don't touch its files"
   Stop (all three tools)                                     -> on_stop(): the session is idle again.
 
-State lives in ~/.jev-router/state/inflight.json, guarded by a lock file; entries older than
-ROUTER_QUEUE_TTL_MIN (default 120) are treated as stale (crashed sessions never block anyone).
+State lives in ~/.jev-router/state/inflight.json, guarded by a lock file. An entry is ignored when
+it is older than ROUTER_QUEUE_TTL_MIN (default 120), or when the session's transcript has not been
+written for ROUTER_QUEUE_IDLE_MIN (default 10) - a turn the user cancelled (Claude runs no Stop hook
+on Esc) or a crashed session must never make the next prompt resume old work.
 """
 import json
 import os
 import time
 from pathlib import Path
 
-TTL_S = 60 * float(os.environ.get("ROUTER_QUEUE_TTL_MIN", "120"))
+def _minutes(var, default):
+    try:
+        return 60 * float(os.environ.get(var, default))
+    except ValueError:
+        return 60 * float(default)
+
+
+TTL_S = _minutes("ROUTER_QUEUE_TTL_MIN", "120")
+IDLE_S = _minutes("ROUTER_QUEUE_IDLE_MIN", "10")
 LOCK_WAIT_S = 2.0
 
 
@@ -33,6 +43,7 @@ class _Lock:
 
     def __init__(self, path):
         self.path = path
+        self.acquired = False
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,6 +51,7 @@ class _Lock:
         while True:
             try:
                 os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                self.acquired = True
                 return self
             except FileExistsError:
                 try:
@@ -53,10 +65,22 @@ class _Lock:
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
+        if not self.acquired:
+            return  # never remove a lock someone else holds
         try:
             self.path.unlink()
         except OSError:
             pass
+
+
+def _save(path, data):
+    """Atomic write: readers never see a half-written file."""
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 def _load(path):
@@ -74,9 +98,11 @@ def _prune(data, now):
             del data[key]
 
 
-def on_submit(state_dir, provider, session_id, cwd, summary):
+def on_submit(state_dir, provider, session_id, cwd, summary, last_activity=None):
     """Register a new request. Returns {"ahead": [entries still running in this session],
-    "others": [entries of OTHER sessions working in the same folder]}."""
+    "others": [entries of OTHER sessions working in the same folder]}.
+    last_activity: mtime of the session's transcript - if the session has been silent for
+    IDLE_S, its earlier entries belong to a cancelled or crashed turn and are dropped."""
     if not session_id:
         return {"ahead": [], "others": []}
     path, lock = _paths(state_dir)
@@ -86,13 +112,12 @@ def on_submit(state_dir, provider, session_id, cwd, summary):
     with _Lock(lock):
         data = _load(path)
         _prune(data, now)
+        if last_activity is not None and now - last_activity > IDLE_S:
+            data.pop(key, None)
         ahead = list(data.get(key, []))
         others = [e for k, v in data.items() if k != key for e in v[:1] if norm_cwd and e.get("cwd") == norm_cwd]
         data.setdefault(key, []).append({"ts": now, "cwd": norm_cwd, "summary": summary, "provider": provider})
-        try:
-            path.write_text(json.dumps(data), encoding="utf-8")
-        except OSError:
-            pass
+        _save(path, data)
     return {"ahead": ahead, "others": others}
 
 
@@ -104,10 +129,7 @@ def on_stop(state_dir, provider, session_id):
     with _Lock(lock):
         data = _load(path)
         if data.pop(f"{provider}:{session_id}", None) is not None:
-            try:
-                path.write_text(json.dumps(data), encoding="utf-8")
-            except OSError:
-                pass
+            _save(path, data)
 
 
 def render(info):

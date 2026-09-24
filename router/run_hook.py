@@ -135,6 +135,17 @@ def _session_id(payload):
     return payload.get("session_id") or payload.get("sessionId") or payload.get("conversationId")
 
 
+def _transcript_mtime(payload):
+    """When the session last wrote its transcript (Claude/Codex: transcript_path, Antigravity:
+    transcriptPath) - None if unknown. The current prompt is usually not yet written when the
+    hook runs, so this reflects the previous turn's last activity."""
+    path = (payload or {}).get("transcript_path") or (payload or {}).get("transcriptPath")
+    try:
+        return Path(path).stat().st_mtime if path else None
+    except OSError:
+        return None
+
+
 def should_skip(prompt):
     low = prompt.lstrip().lower()
     return (len(prompt) < 3 or low.startswith("/") or low.startswith(SYSTEM_PREFIXES)
@@ -155,7 +166,8 @@ def main(argv=None):
     raw = sys.stdin.buffer.read()
     if hook_event_name == "Stop":  # the agent finished its turn: release its queue entries
         payload = _json_object(raw)
-        queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
+        if payload.get("fullyIdle") is not False:  # Antigravity: background work may still run
+            queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
         if provider == "antigravity":
             print("{}")  # Antigravity expects a JSON object; no "decision" means "allow the stop"
         return 0
@@ -175,7 +187,8 @@ def main(argv=None):
     cwd = (payload.get("cwd") or (payload.get("workspacePaths") or [""])[0]) if payload else ""
     private = any(t in low for t in SKIP_TAGS)
     queue_text = queue_state.render(queue_state.on_submit(
-        core.STATE_DIR, provider, _session_id(payload), cwd, "" if private else redact(" ".join(prompt.split())[:60])))
+        core.STATE_DIR, provider, _session_id(payload), cwd, "" if private else redact(" ".join(prompt.split())[:60]),
+        last_activity=_transcript_mtime(payload)))
     if private:  # #norouter / #privat: no routing, never sent to TypeSafe - only the queue protection
         if queue_text:
             emit(queue_text, hook_event_name, provider)

@@ -5,6 +5,26 @@ dates are ISO 8601.
 
 ---
 
+## [3.0.1] – 2026-09-24 · Cross-platform review fixes
+
+### Fixed
+- macOS: the launchd plist is written with `plistlib` (names with `&`/`<` no longer break it), gets
+  the caller's `PATH` (npm/Homebrew/nvm `claude` finds `node`), a 30 s throttle and a log file, and
+  is loaded with `launchctl bootout`/`bootstrap` and verified with `launchctl print`.
+- Linux: systemd `%`/`$`/quote escaping; `restart` after `enable`, so a new name or folder takes effect.
+- Queue: a turn cancelled with Esc (Claude runs no `Stop` hook then) no longer blocks the next prompt –
+  entries of a session whose transcript has been silent for `ROUTER_QUEUE_IDLE_MIN` (default 10) are
+  dropped; Antigravity `Stop` clears only when `fullyIdle`; the lock is released only by its owner;
+  atomic state writes; invalid `ROUTER_QUEUE_TTL_MIN` no longer crashes the hook.
+- Installer: unknown sub-commands are rejected; without a terminal and without `--yes` nothing is
+  moved; `remote --remove --dry-run` changes nothing; the token file is created owner-only; a config
+  file with invalid JSON is reported and skipped instead of aborting; the first `.bak` is never
+  overwritten; migration only touches the selected tools' skill folders.
+- Hook commands are shell-safe (quoted on POSIX, short paths on Windows); MCP entries use the plain
+  interpreter path; a virtualenv's base interpreter is used so hooks survive the venv's removal.
+- Link ownership uses real path containment (`~/.skills-old` is not `~/.skills`); `LOCALAPPDATA`
+  is only consulted on Windows.
+
 ## [3.0.0] – 2026-09-24 · Open-source release
 
 ### Added

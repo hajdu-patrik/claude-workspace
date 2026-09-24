@@ -5,8 +5,10 @@ Normally driven by `python install.py`; usable on its own:
     python router/install_hooks.py [--apply] [--providers claude,codex,antigravity] [--uninstall]
 
 Every hook / MCP entry calls a small shim in ~/.jev-router/bin/ that runs the real script from this
-repository, so moving the repository only requires re-running the installer. Changed files get a
-`.bak` copy first. Idempotent: a second run changes nothing. Entries of other tools are preserved.
+repository, so moving the repository only requires re-running the installer. The first time a file
+is changed its original is kept as `<file>.bak` (never overwritten later). Idempotent: a second run
+changes nothing. Entries of other tools are preserved; a config file that is not valid JSON is
+reported and left untouched.
 
 Hooks per provider:
     claude       UserPromptSubmit + Stop          (~/.claude/settings.json)
@@ -49,8 +51,9 @@ class Writer:
         print(("[DO]  " if self.apply else "[DRY] ") + f"{label}: {'update' if old is not None else 'create'} {path}")
         if self.apply:
             path.parent.mkdir(parents=True, exist_ok=True)
-            if old is not None:
-                path.with_name(path.name + ".bak").write_text(old, encoding="utf-8")
+            bak = path.with_name(path.name + ".bak")
+            if old is not None and not bak.exists():  # keep the ORIGINAL, pre-jev-router version
+                bak.write_text(old, encoding="utf-8")
             path.write_text(content, encoding="utf-8")
 
 
@@ -58,11 +61,21 @@ def fwd(p):
     return str(p).replace("\\", "/")
 
 
+class BadConfig(Exception):
+    pass
+
+
 def load(path):
     path = Path(path)
     if not path.exists() or not path.read_text(encoding="utf-8").strip():
         return {}
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise BadConfig(f"{path} is not valid JSON ({exc}) - fix it, then re-run") from exc
+    if not isinstance(data, dict):
+        raise BadConfig(f"{path} does not contain a JSON object - fix it, then re-run")
+    return data
 
 
 def is_router_cmd(cmd):
@@ -71,7 +84,9 @@ def is_router_cmd(cmd):
 
 
 def hook_cmd(provider, event):
-    return f"{P.python_cmd()} {fwd(SHIM_HOOK)} {provider} {event}"
+    # both words are shell-safe: quoted on POSIX, space-free short paths on Windows (Antigravity
+    # runs hooks through `cmd /c`, which mangles quoted paths)
+    return f"{P.python_cmd()} {P.shell_arg(SHIM_HOOK)} {provider} {event}"
 
 
 def _strip_router(groups):
@@ -125,7 +140,8 @@ def json_mcp(path, label, w, uninstall=False):
     if uninstall:
         servers.pop("jev-router", None)
     else:
-        servers["jev-router"] = {"command": P.python_cmd(), "args": [fwd(SHIM_MCP)]}
+        # MCP clients exec "command" directly (no shell): the plain interpreter path, never shell-quoted
+        servers["jev-router"] = {"command": fwd(P.python_exe()), "args": [fwd(SHIM_MCP)]}
     w.write(path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", label)
 
 
@@ -133,7 +149,7 @@ def codex_mcp(path, w, uninstall=False):
     text = Path(path).read_text(encoding="utf-8") if Path(path).exists() else ""
     # the section ends at the next table OR comment line (our generated agents block starts with one)
     pat = re.compile(r"\[mcp_servers\.jev-router\]\n(?:(?![\[#]).*\n?)*", re.M)
-    block = f'[mcp_servers.jev-router]\ncommand = {json.dumps(P.python_cmd())}\nargs = [{json.dumps(fwd(SHIM_MCP))}]\n\n'
+    block = f'[mcp_servers.jev-router]\ncommand = {json.dumps(fwd(P.python_exe()))}\nargs = [{json.dumps(fwd(SHIM_MCP))}]\n\n'
     m = pat.search(text)
     if uninstall:
         new = (text[:m.start()] + text[m.end():]) if m else text
@@ -150,15 +166,21 @@ def install(providers=ALL, apply=False, uninstall=False):
     if not uninstall:
         w.write(SHIM_HOOK, SHIM_TEMPLATE.format(target=REPO / "router" / "run_hook.py"), "hook shim")
         w.write(SHIM_MCP, SHIM_TEMPLATE.format(target=REPO / "router" / "mcp_server.py"), "MCP shim")
+    steps = []
     if "claude" in providers:
-        claude_codex_hooks(P.PATHS["claude_settings"], "claude", w, uninstall)
-        json_mcp(P.claude_desktop_config(), "claude desktop MCP (Chat/Cowork)", w, uninstall)
+        steps += [lambda: claude_codex_hooks(P.PATHS["claude_settings"], "claude", w, uninstall),
+                  lambda: json_mcp(P.claude_desktop_config(), "claude desktop MCP (Chat/Cowork)", w, uninstall)]
     if "codex" in providers:
-        claude_codex_hooks(P.PATHS["codex_hooks"], "codex", w, uninstall)
-        codex_mcp(P.PATHS["codex_config"], w, uninstall)
+        steps += [lambda: claude_codex_hooks(P.PATHS["codex_hooks"], "codex", w, uninstall),
+                  lambda: codex_mcp(P.PATHS["codex_config"], w, uninstall)]
     if "antigravity" in providers:
-        antigravity_hooks(P.PATHS["agy_hooks"], w, uninstall)
-        json_mcp(P.PATHS["agy_mcp"], "antigravity MCP", w, uninstall)
+        steps += [lambda: antigravity_hooks(P.PATHS["agy_hooks"], w, uninstall),
+                  lambda: json_mcp(P.PATHS["agy_mcp"], "antigravity MCP", w, uninstall)]
+    for step in steps:
+        try:
+            step()
+        except BadConfig as exc:  # one broken file must not stop the others
+            print(f"[FAIL] {exc}")
     return w.changes
 
 

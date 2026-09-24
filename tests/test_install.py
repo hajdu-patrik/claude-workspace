@@ -140,3 +140,54 @@ def test_codex_mcp_keeps_following_generated_block(tmp_path):
     install_hooks.codex_mcp(cfg, install_hooks.Writer(apply=True), uninstall=True)
     text = cfg.read_text(encoding="utf-8")
     assert "mcp_servers.jev-router" not in text and "[agents.a-low]" in text
+
+
+def test_queue_drops_cancelled_turn(tmp_path):
+    import time
+    queue_state.on_submit(tmp_path, "claude", "s", "/w", "old task")
+    assert queue_state.on_submit(tmp_path, "claude", "s", "/w", "next", last_activity=time.time())["ahead"]
+    # transcript silent for longer than IDLE_S: the earlier turn was cancelled (no Stop hook on Esc)
+    info = queue_state.on_submit(tmp_path, "claude", "s", "/w", "new", last_activity=time.time() - queue_state.IDLE_S - 5)
+    assert info["ahead"] == []
+
+
+def test_antigravity_stop_waits_for_fully_idle(monkeypatch, capsys):
+    hook(monkeypatch, capsys, "claude", "UserPromptSubmit", {"prompt": "long running work", "session_id": "g", "cwd": "/w"})
+    import queue_state as q
+    q.on_submit(core.STATE_DIR, "antigravity", "conv", "/x", "bg work")
+    hook(monkeypatch, capsys, "antigravity", "Stop", {"conversationId": "conv", "fullyIdle": False})
+    assert q.on_submit(core.STATE_DIR, "antigravity", "conv", "/x", "next")["ahead"]   # still running
+    hook(monkeypatch, capsys, "antigravity", "Stop", {"conversationId": "conv", "fullyIdle": True})
+    assert not q.on_submit(core.STATE_DIR, "antigravity", "conv", "/x", "after")["ahead"]
+
+
+def test_owned_is_real_containment(tmp_path, monkeypatch):
+    import skills_hub
+    hub, old = tmp_path / ".skills", tmp_path / ".skills-old"
+    (hub / "a").mkdir(parents=True)
+    (old / "b").mkdir(parents=True)
+    monkeypatch.setattr(skills_hub, "HUB", hub)
+    P.link_dir(tmp_path / "l1", hub / "a")
+    P.link_dir(tmp_path / "l2", old / "b")
+    assert skills_hub.owned(tmp_path / "l1") and not skills_hub.owned(tmp_path / "l2")
+
+
+def test_mcp_command_is_unquoted_interpreter(tmp_path, monkeypatch):
+    monkeypatch.setattr(install_hooks, "SHIM_MCP", tmp_path / "bin" / "mcp_server.py")
+    install_hooks.json_mcp(tmp_path / "mcp.json", "x", install_hooks.Writer(apply=True))
+    cmd = json.loads((tmp_path / "mcp.json").read_text())["mcpServers"]["jev-router"]["command"]
+    assert "'" not in cmd and '"' not in cmd and Path(cmd.replace("/", "\\") if P.IS_WINDOWS else cmd).name.startswith("python")
+
+
+def test_bad_json_config_is_reported_not_fatal(tmp_path, monkeypatch, capsys):
+    paths = {k: tmp_path / Path(v).relative_to(P.HOME) for k, v in P.PATHS.items()}
+    monkeypatch.setattr(P, "PATHS", paths)
+    monkeypatch.setattr(P, "claude_desktop_config", lambda: tmp_path / "cd.json")
+    monkeypatch.setattr(install_hooks, "SHIM_HOOK", tmp_path / "bin" / "run_hook.py")
+    monkeypatch.setattr(install_hooks, "SHIM_MCP", tmp_path / "bin" / "mcp_server.py")
+    paths["claude_settings"].parent.mkdir(parents=True)
+    paths["claude_settings"].write_text("{broken", encoding="utf-8")
+    install_hooks.install(("claude", "codex"), apply=True)
+    assert "[FAIL]" in capsys.readouterr().out
+    assert paths["claude_settings"].read_text(encoding="utf-8") == "{broken"      # left untouched
+    assert "run_hook.py codex" in paths["codex_hooks"].read_text(encoding="utf-8")  # others still installed

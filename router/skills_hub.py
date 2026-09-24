@@ -85,8 +85,13 @@ def owned(link):
     if not is_junction(link):
         return False
     t = target_of(link)
-    hub, repo = target_of(HUB), target_of(REPO_SKILLS)
-    return t is not None and any(str(t).lower().startswith(str(b).lower()) for b in (hub, repo) if b)
+    if t is None:
+        return False
+    for base in (target_of(HUB), target_of(REPO_SKILLS)):
+        # real path containment (not a string prefix: ~/.skills-old must not count as ~/.skills)
+        if base is not None and (t == base or base in t.parents):
+            return True
+    return False
 
 
 def ensure_link(link, target, label):
@@ -112,12 +117,14 @@ def hub_skills():
 # User-installed skill folders of every tool; each real folder is moved into the hub and replaced by
 # a link, so the tool keeps working and every other tool gets the skill too. App-managed folders
 # (Claude desktop's synced/, Codex's .system/) stay where they are - the catalog indexes them.
-MIGRATE_SOURCES = [CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS, HOME / ".gemini" / "config" / "skills"]
+MIGRATE_SOURCES = {"claude": [CLAUDE_SKILLS], "codex": [CODEX_SKILLS, LEGACY_CODEX_SKILLS],
+                   "antigravity": [HOME / ".gemini" / "config" / "skills"]}
 
 
 def cmd_migrate():
     moved = 0
-    candidates = [d for src in MIGRATE_SOURCES if src.is_dir() for d in sorted(src.iterdir())]
+    sources = [src for p in PROVIDERS for src in MIGRATE_SOURCES.get(p, [])]  # only the selected tools
+    candidates = [d for src in sources if src.is_dir() for d in sorted(src.iterdir())]
     if not candidates:
         print("nothing to migrate")
         return

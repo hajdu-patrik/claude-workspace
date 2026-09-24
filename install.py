@@ -63,7 +63,10 @@ def parse_args(argv):
 
 
 FLAGS, POSITIONAL = parse_args(sys.argv[1:])
+COMMANDS = ("setup", "detect", "models", "remote", "uninstall")
 COMMAND = POSITIONAL[0] if POSITIONAL else "setup"
+if COMMAND not in COMMANDS or len(POSITIONAL) > 1:
+    sys.exit(f"Unknown command: {' '.join(POSITIONAL)}. Use one of: {', '.join(COMMANDS)} (quote names with spaces).")
 YES = "--yes" in FLAGS
 DRY = "--dry-run" in FLAGS
 
@@ -73,8 +76,12 @@ def say(msg=""):
 
 
 def ask(question, default="y"):
-    if YES or not sys.stdin.isatty():
+    """--yes accepts the default. Without a terminal (and without --yes) nothing is changed:
+    every question is answered "no", so an unattended run can never move files unasked."""
+    if YES:
         return default.lower().startswith("y")
+    if not sys.stdin.isatty():
+        return False
     ans = input(f"{question} [{'Y/n' if default.lower().startswith('y') else 'y/N'}] ").strip().lower()
     return (ans or default).startswith("y")
 
@@ -90,9 +97,12 @@ def save_config(cfg):
     if DRY:
         return
     STATE.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # created owner-only from the start (it holds the JEV token); os.open's mode is ignored on Windows
+    fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(cfg, indent=2))
     if not P.IS_WINDOWS:
-        os.chmod(CONFIG, 0o600)  # holds the JEV token
+        os.chmod(CONFIG, 0o600)  # an existing file keeps its old mode otherwise
 
 
 # --- 1. detection ------------------------------------------------------------------------------------
@@ -239,6 +249,10 @@ def main():
         return 0
     if COMMAND == "remote":
         if "--remove" in FLAGS:
+            if DRY:
+                say("Dry run: would remove the remote-access services (scheduled tasks / launchd / systemd) "
+                    "and stop the Antigravity and Codex remote daemons.")
+                return 0
             for tool, ok, msg in remote.remove():
                 say(f"[{'OK' if ok else '!!'}] {tool}: {msg}")
             return 0

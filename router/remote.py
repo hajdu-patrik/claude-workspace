@@ -16,6 +16,9 @@ The machine name is stored in ~/.jev-router/config.json, never in the repository
 The computer must be on, awake and logged in for any of this to be reachable.
 """
 import json
+import os
+import plistlib
+import time
 
 import platforms as P
 
@@ -23,7 +26,9 @@ BIN = P.HOME / ".jev-router" / "bin"
 CONFIG = P.HOME / ".jev-router" / "config.json"
 TASK_CLAUDE, TASK_CHATGPT = "JevRouter-ClaudeRemote", "JevRouter-ChatGPT"
 LEGACY_TASKS = ("ClaudeRemoteControl", "ChatGPTAutostart", "CodexRemoteControl")
-LAUNCHD = P.HOME / "Library" / "LaunchAgents" / "com.jev-router.claude-remote.plist"
+LAUNCHD_LABEL = "com.jev-router.claude-remote"
+LAUNCHD = P.HOME / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+LOG = P.HOME / ".jev-router" / "logs" / "claude-remote.log"
 SYSTEMD = P.HOME / ".config" / "systemd" / "user" / "jev-router-claude-remote.service"
 
 
@@ -62,6 +67,54 @@ def claude_trusts(folder):
     return any(norm(k) == norm(folder) and v.get("hasTrustDialogAccepted") for k, v in projects.items())
 
 
+def _launchd_plist(name, claude, workdir):
+    """launchd agent plist (bytes). plistlib escapes &, <, quotes in names and paths. PATH is copied
+    from this process so an npm/Homebrew/nvm `claude` (a `#!/usr/bin/env node` script) finds node."""
+    return plistlib.dumps({
+        "Label": LAUNCHD_LABEL,
+        "ProgramArguments": [str(claude), "remote-control", "--name", str(name)],
+        "WorkingDirectory": str(workdir),
+        "EnvironmentVariables": {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")},
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 30,
+        "StandardOutPath": str(LOG),
+        "StandardErrorPath": str(LOG),
+    })
+
+
+def _one_line(value):
+    return " ".join(str(value).splitlines())
+
+
+def _sd_quote(value, dollar=True):
+    """A double-quoted systemd argument: backslash and `"` backslash-escaped, `%` specifiers doubled and,
+    where the setting expands variables (ExecStart=), `$` doubled."""
+    value = _one_line(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    if dollar:
+        value = value.replace("$", "$$")
+    return f'"{value}"'
+
+
+def _systemd_unit(name, claude, workdir):
+    """systemd --user unit text with specifiers/quoting escaped. Description= and WorkingDirectory=
+    only expand `%` specifiers; Environment= does no `$` expansion, so `$` is left alone there."""
+    path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    return f"""[Unit]
+Description=Claude Code Remote Control ({_one_line(name).replace("%", "%%")})
+
+[Service]
+ExecStart={_sd_quote(claude)} remote-control --name {_sd_quote(name)}
+WorkingDirectory={_one_line(workdir).replace("%", "%%")}
+Environment={_sd_quote("PATH=" + path, dollar=False)}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+"""
+
+
 def _setup_claude(name, claude, workdir):
     if P.IS_WINDOWS:
         script = BIN / "claude-remote.cmd"
@@ -78,33 +131,24 @@ def _setup_claude(name, claude, workdir):
         code, out = _win_task(TASK_CLAUDE, "cmd.exe", f'/c "{script}"', str(workdir))
     elif P.IS_MAC:
         LAUNCHD.parent.mkdir(parents=True, exist_ok=True)
-        LAUNCHD.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.jev-router.claude-remote</string>
-  <key>ProgramArguments</key><array><string>{claude}</string><string>remote-control</string><string>--name</string><string>{name}</string></array>
-  <key>WorkingDirectory</key><string>{workdir}</string>
-  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-</dict></plist>
-""", encoding="utf-8")
-        P.run(["launchctl", "unload", str(LAUNCHD)])
-        code, out = P.run(["launchctl", "load", "-w", str(LAUNCHD)])
+        LOG.parent.mkdir(parents=True, exist_ok=True)  # launchd does not create the log folder
+        LAUNCHD.write_bytes(_launchd_plist(name, claude, workdir))
+        domain = f"gui/{os.getuid()}"
+        P.run(["launchctl", "bootout", f"{domain}/{LAUNCHD_LABEL}"])  # fails harmlessly when not loaded
+        out = ""
+        for _ in range(3):  # bootout finishes asynchronously; bootstrap may briefly fail right after it
+            _, out = P.run(["launchctl", "bootstrap", domain, str(LAUNCHD)])
+            code, _ = P.run(["launchctl", "print", f"{domain}/{LAUNCHD_LABEL}"])
+            if code == 0:
+                break
+            time.sleep(1)
     else:
         SYSTEMD.parent.mkdir(parents=True, exist_ok=True)
-        SYSTEMD.write_text(f"""[Unit]
-Description=Claude Code Remote Control ({name})
-
-[Service]
-ExecStart="{claude}" remote-control --name "{name}"
-WorkingDirectory={workdir}
-Restart=always
-RestartSec=30
-
-[Install]
-WantedBy=default.target
-""", encoding="utf-8")
+        SYSTEMD.write_text(_systemd_unit(name, claude, workdir), encoding="utf-8")
         P.run(["systemctl", "--user", "daemon-reload"])
-        code, out = P.run(["systemctl", "--user", "enable", "--now", SYSTEMD.name])
+        P.run(["systemctl", "--user", "enable", SYSTEMD.name])
+        # restart (not just start): a changed name/workdir must take effect on re-run
+        code, out = P.run(["systemctl", "--user", "restart", SYSTEMD.name])
     return code == 0, out
 
 
@@ -149,12 +193,13 @@ def remove():
             _ps(f'Unregister-ScheduledTask -TaskName "{task}" -Confirm:$false -ErrorAction SilentlyContinue')
         report.append(("claude/codex", True, "scheduled tasks removed"))
     elif P.IS_MAC and LAUNCHD.exists():
-        P.run(["launchctl", "unload", "-w", str(LAUNCHD)])
+        P.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"])  # ignore failure: may not be loaded
         LAUNCHD.unlink()
         report.append(("claude", True, "launchd agent removed"))
     elif SYSTEMD.exists():
         P.run(["systemctl", "--user", "disable", "--now", SYSTEMD.name])
         SYSTEMD.unlink()
+        P.run(["systemctl", "--user", "daemon-reload"])
         report.append(("claude", True, "systemd user service removed"))
     if agy := P.find_exe("agy"):
         P.run([agy, "remote-control", "stop"], timeout=60)

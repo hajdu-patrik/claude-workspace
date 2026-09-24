@@ -88,8 +88,9 @@ def find_exe(name):
         return found
     candidates = []
     if name == "agy":
-        candidates = [Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe", HOME / ".local" / "bin" / "agy",
-                      HOME / ".agy" / "bin" / "agy"]
+        candidates = [HOME / ".local" / "bin" / "agy", HOME / ".agy" / "bin" / "agy"]
+        if IS_WINDOWS and os.environ.get("LOCALAPPDATA"):
+            candidates.insert(0, Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "agy.exe")
     elif name == "claude":
         candidates = [HOME / ".local" / "bin" / ("claude.exe" if IS_WINDOWS else "claude"), HOME / ".claude" / "local" / "claude"]
     for c in candidates:
@@ -98,13 +99,43 @@ def find_exe(name):
     return None
 
 
+def short_path(p):
+    """Windows 8.3 short form of an existing path (no spaces), else the path unchanged. Antigravity
+    runs hook commands through `cmd /c`, which mangles quoted paths - a short path needs no quotes."""
+    p = str(p)
+    if not IS_WINDOWS or " " not in p:
+        return p
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(p, buf, 1024):
+            return buf.value
+    except (OSError, AttributeError):
+        pass
+    return p
+
+
+def python_exe():
+    """A stable interpreter for hooks: the base interpreter when running inside a virtualenv (the
+    venv may be deleted later), else sys.executable."""
+    exe = sys.executable or ("python" if IS_WINDOWS else "python3")
+    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        exe = getattr(sys, "_base_executable", exe) or exe
+    return exe
+
+
+def shell_arg(p):
+    """One command-line argument, safe for sh (Claude/Codex on POSIX), bash/cmd (Windows) and
+    Antigravity's `cmd /c`: short path on Windows, shell-quoted on POSIX."""
+    import shlex
+    if IS_WINDOWS:
+        return short_path(p).replace("\\", "/")
+    return shlex.quote(str(p))
+
+
 def python_cmd():
-    """Interpreter for hook commands. Absolute path unless it contains spaces (Antigravity runs
-    hooks through `cmd /c` on Windows, which mangles quoted paths) - then the PATH name."""
-    exe = sys.executable or "python"
-    if " " in exe:
-        return "python" if IS_WINDOWS else "python3"
-    return exe.replace("\\", "/")
+    """Interpreter as a ready-to-use command-line word."""
+    return shell_arg(python_exe())
 
 
 def run(argv, timeout=30):
