@@ -267,7 +267,17 @@ def cmd_agents():
     cfg = CODEX_CONFIG.read_text(encoding="utf-8") if CODEX_CONFIG.exists() else ""
     pattern = re.compile(re.escape(TOML_BEGIN) + r".*?" + re.escape(TOML_END) + r"\n?", re.S)
     new_block = "\n".join(block) + "\n"
-    new_cfg = pattern.sub(new_block, cfg) if pattern.search(cfg) else cfg.rstrip("\n") + "\n\n" + new_block
+    old = pattern.search(cfg)
+    if old:
+        # Codex appends its own tables (e.g. [hooks.state] = the user's hook trust) at the end of the
+        # file, which can land INSIDE our block: keep every non-[agents.*] table, re-emitted after it.
+        tables = re.split(r"(?m)^(?=\[)", old.group(0).replace(TOML_END, ""))
+        foreign = "".join(t for t in tables if t.startswith("[") and not t.startswith("[agents.")).strip("\n")
+        new_cfg = cfg[:old.start()] + new_block + cfg[old.end():]
+        if foreign:
+            new_cfg = new_cfg.rstrip("\n") + "\n\n" + foreign + "\n"
+    else:
+        new_cfg = cfg.rstrip("\n") + "\n\n" + new_block
     if new_cfg != cfg:
         act(f"{CODEX_CONFIG}: update [agents.*] block ({len(want)} roles)",
             lambda: CODEX_CONFIG.write_text(new_cfg, encoding="utf-8"))

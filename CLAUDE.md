@@ -31,7 +31,7 @@ Respond in the language of the user's prompt (Hungarian or English); the `[route
 
 Machine: "Razer Blade-16" (home PC) - Windows 11, RTX 4090 Laptop. Remote access: Claude
 Remote Control server `Razer Blade-16` (start-rc.cmd, `ClaudeRemoteControl` logon task; the Claude
-app starts at logon too), Antigravity daemon `razer-blade-16-rising-photon`, Codex via the ChatGPT
+app starts at logon too), Antigravity daemon `Razer Blade-16`, Codex via the ChatGPT
 app (`ChatGPTAutostart` logon task + one-time "Control this PC" pairing). Cloud sessions are a
 separate environment ("Claude GitHub Session") - don't mix them up.
 

@@ -151,7 +151,7 @@ Everything starts automatically at logon:
 | Tool | What runs | From the phone / another laptop |
 |---|---|---|
 | **Claude** | `ClaudeRemoteControl` logon task → `start-rc.cmd` → `claude remote-control --name "Razer Blade-16"` (restarts itself); the Claude desktop app also starts at logon, and every new Code session connects to Remote Control automatically | Claude app → Code, or claude.ai/code in any browser → **Razer Blade-16** (a new session on this PC) or an existing session such as "Razer Blade-16 – JEV router…" |
-| **Antigravity** | `agy remote-control` daemon (HKCU Run key `AntigravityCliDaemon`), instance `razer-blade-16-rising-photon` | https://antigravity.google.com (browser / installable web app) |
+| **Antigravity** | `agy remote-control` daemon (HKCU Run key `AntigravityCliDaemon`), instance name **Razer Blade-16** | https://antigravity.google.com (browser / installable web app) |
 | **Codex** | `ChatGPTAutostart` logon task opens the ChatGPT desktop app, which hosts the remote connection | one-time: ChatGPT app → Settings → Connections → *Control this PC* → scan the QR code with the ChatGPT mobile app |
 
 Why not `codex remote-control start`: it must detach a daemon, and on this Windows build every
