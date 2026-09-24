@@ -1,5 +1,5 @@
 {
-  "_comment": "Generic catalog of every model and reasoning-effort level the router may choose, per provider. 'selectable' is the DEFAULT availability; what a given account can really use differs by plan, so `python install.py models --probe` tests it and writes per-user overrides to ~/.jev-router/models.local.json (never committed). policy.excluded_efforts is removed from EVERY provider in code. Agents/roles enforcing a (model, effort) pair are generated from this file.",
+  "_comment": "Generic catalog of every model and reasoning-effort level the router may choose, per provider. 'selectable' is the DEFAULT availability; what a given account can really use differs by plan, so `python install.py models --probe` tests it and writes per-user overrides to ~/.jev-router/models.local.json (never committed). policy.excluded_efforts is removed from EVERY provider in code. Agents/roles enforcing a (model, effort) pair are generated from this file. 'role' (fast / balanced / deep) picks the worker template jev_router/templates/agents/<role>-worker.md for the model's generated agents; a model without one uses 'balanced'.",
   "policy": {
     "excluded_efforts": [
       "ultra"
@@ -27,6 +27,7 @@
       {
         "id": "fable",
         "selectable": true,
+        "role": "fast",
         "levels": [
           "low",
           "medium",
@@ -39,6 +40,7 @@
       {
         "id": "sonnet",
         "selectable": true,
+        "role": "balanced",
         "levels": [
           "low",
           "medium",
@@ -51,6 +53,7 @@
       {
         "id": "opus",
         "selectable": true,
+        "role": "deep",
         "levels": [
           "low",
           "medium",
@@ -68,6 +71,7 @@
       {
         "id": "gpt-6-astra",
         "selectable": false,
+        "role": "deep",
         "levels": [
           "low",
           "medium",
@@ -81,6 +85,7 @@
       {
         "id": "gpt-6-sol",
         "selectable": false,
+        "role": "deep",
         "levels": [
           "low",
           "medium",
@@ -94,6 +99,7 @@
       {
         "id": "gpt-6-luna",
         "selectable": true,
+        "role": "balanced",
         "levels": [
           "low",
           "medium",
@@ -106,6 +112,7 @@
       {
         "id": "gpt-reserve",
         "selectable": true,
+        "role": "balanced",
         "levels": [
           "low",
           "medium",
@@ -118,6 +125,7 @@
       {
         "id": "gpt-5.6-sol",
         "selectable": false,
+        "role": "deep",
         "levels": [
           "low",
           "medium",
@@ -131,6 +139,7 @@
       {
         "id": "gpt-5.6-terra",
         "selectable": true,
+        "role": "deep",
         "levels": [
           "low",
           "medium",
@@ -144,6 +153,7 @@
       {
         "id": "gpt-5.6-luna",
         "selectable": true,
+        "role": "fast",
         "levels": [
           "low",
           "medium",
@@ -156,6 +166,7 @@
       {
         "id": "gpt-5.5",
         "selectable": false,
+        "role": "balanced",
         "levels": [
           "low",
           "medium",
@@ -167,6 +178,7 @@
       {
         "id": "gpt-5.4",
         "selectable": false,
+        "role": "balanced",
         "levels": [
           "low",
           "medium",
@@ -224,6 +236,8 @@
       {
         "id": "gemini-3.8-flash",
         "selectable": true,
+        "role": "balanced",
+        "agent_tier": "flash",
         "levels": [
           "low",
           "medium",
@@ -235,6 +249,7 @@
       {
         "id": "gemini-3.7-flash",
         "selectable": true,
+        "role": "balanced",
         "levels": [
           "low",
           "medium",
@@ -246,6 +261,7 @@
       {
         "id": "gemini-3.6-flash",
         "selectable": true,
+        "role": "fast",
         "levels": [
           "low",
           "medium",
@@ -257,6 +273,8 @@
       {
         "id": "gemini-3.1-pro",
         "selectable": true,
+        "role": "deep",
+        "agent_tier": "pro",
         "levels": [
           "low",
           "high"
@@ -267,6 +285,7 @@
       {
         "id": "claude-sonnet-4-6",
         "selectable": true,
+        "role": "balanced",
         "levels": [],
         "slug": "{id}",
         "description": "Claude Sonnet 4.6 (Thinking) inside Antigravity"
@@ -274,6 +293,7 @@
       {
         "id": "claude-opus-4-6-thinking",
         "selectable": true,
+        "role": "deep",
         "levels": [],
         "slug": "{id}",
         "description": "Claude Opus 4.6 (Thinking) inside Antigravity - strongest non-Gemini option"
@@ -281,6 +301,7 @@
       {
         "id": "gpt-oss-120b",
         "selectable": true,
+        "role": "balanced",
         "levels": [
           "medium"
         ],
@@ -300,6 +321,7 @@
     "skills": {
       "mechanism": "~/.gemini/config/skills.json 'entries' list, each path scanned one level deep.",
       "path_rule": "Verified 2026-09-23 (agy 1.2.9): skills.json entry paths must be ABSOLUTE ('~/.skills' is rejected at runtime despite the docs), and directory links inside an entry are not followed."
-    }
+    },
+    "agents": "Custom agents: ~/.gemini/config/agents/<name>/agent.md (YAML frontmatter + H1-delimited system prompt). Verified 2026-09-24 (agy 1.2.10): 'model' only accepts the tiers inherit / flash / pro / flash_lite (anything else makes agy ignore the agent: 'unsupported model'), no reasoning effort can be pinned; a pro-tier agent invoked as a subagent ran on gemini-3.1-pro-low, while `agy --agent <name>` for the main session keeps the session's model. Workspace .agents/agents/ was not picked up by `agy -p --agent`. 'agent_tier' marks the model an agent of that tier runs on; one agent per tier is generated."
   }
 }

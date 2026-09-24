@@ -165,6 +165,14 @@ def test_jev_model_pick_every_provider(monkeypatch):
     assert d.get("model") is None
 
 
+def test_route_antigravity_deep_delegates_to_the_pro_agent():
+    d, text, _, _ = core.route("Migrate the entire codebase to microservices", "antigravity")
+    assert d["primary"] == "deep"
+    assert d["target_agent"] == "gemini-pro-worker"
+    assert "`gemini-pro-worker`" in text
+    assert "gemini-3.1-pro-high" in text
+
+
 def test_route_antigravity_model_name_has_effort():
     d, text, _, _ = core.route("Mi Magyarország fővárosa?", "antigravity")
     assert d["primary"] == "fast"

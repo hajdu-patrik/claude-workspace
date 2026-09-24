@@ -7,6 +7,7 @@ Standard library only.
   - Every provider: each tier model exists in models.json (for Claude's cli:* tiers: in that
     other provider's list), each tier effort is supported by that model, and no excluded effort
     (policy.excluded_efforts, 'ultra') appears in any tier.
+  - Every selectable model's role has a worker template; an agent_tier is one Antigravity accepts.
 Runs as part of the test suite: python -m pytest tests -q
 """
 import json
@@ -66,10 +67,26 @@ def main():
     for p, cat in catalogs.items():
         sel = [m for m in cat.values() if m.get("selectable")]
         print(f"[OK]   models.json {p}: {len(sel)} selectable model(s), {len(cat) - len(sel)} not selectable")
+        errors += role_errors(p, sel)
 
     for e in errors:
         print(f"[FAIL] {e}")
     return 1 if errors else 0
+
+
+AGY_AGENT_TIERS = {"inherit", "flash", "pro", "flash_lite"}  # the only values agy accepts in an agent's `model`
+
+
+def role_errors(provider, selectable):
+    """Every selectable model has a role with a worker template; an Antigravity agent_tier is one agy accepts."""
+    errors = []
+    for m in selectable:
+        where = f"models.json {provider}.{m['id']}"
+        if not (PKG / "templates" / "agents" / f"{m.get('role', 'balanced')}-worker.md").is_file():
+            errors.append(f"{where}: role '{m.get('role')}' has no templates/agents/<role>-worker.md")
+        if "agent_tier" in m and (provider != "antigravity" or m["agent_tier"] not in AGY_AGENT_TIERS):
+            errors.append(f"{where}: agent_tier '{m['agent_tier']}' (Antigravity only: {sorted(AGY_AGENT_TIERS)})")
+    return errors
 
 
 def test_model_policy():

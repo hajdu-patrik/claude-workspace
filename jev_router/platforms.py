@@ -46,6 +46,7 @@ PATHS = {
     "agy_hooks": AGY_CONFIG / "hooks.json",
     "agy_skills_json": AGY_CONFIG / "skills.json",
     "agy_mcp": AGY_CONFIG / "mcp_config.json",
+    "agy_agents": AGY_CONFIG / "agents",                  # custom agents: <name>/agent.md
 }
 
 

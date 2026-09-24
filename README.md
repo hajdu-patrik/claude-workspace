@@ -93,8 +93,14 @@ prompt ─► hook / MCP tool ─► jev_router/core.route()
 
 No tool lets a hook switch the running model. jev-router therefore generates one **worker agent per
 (model, effort) pair** – Claude subagents `<model>-worker-<effort>` (plus `test-worker-<effort>`),
-Codex roles `<model>-<effort>` – and the router delegates to the right one. Antigravity has no
-fixed-model agents, so its model choice is advisory (or enforced through the `cli-bridge` skill).
+Codex roles `<model>-<effort>` – and the router delegates to the right one. Antigravity agents can
+pin only a model tier (flash / pro), not an effort, and only as subagents: jev-router generates
+`gemini-flash-worker` and `gemini-pro-worker` (`~/.gemini/config/agents/`), and hard requests are
+delegated to the Pro one; otherwise the model choice is advisory (or enforced through `cli-bridge`).
+
+Each agent's instructions come from the template of its model's **role** in `models.json` –
+`fast`, `balanced`, `deep` (`jev_router/templates/agents/<role>-worker.md`), plus `test-worker` for
+the test tier – so a new model needs one line in `models.json`, not a new template.
 
 | Provider | Models (catalog: `jev_router/config/models.json`) | Effort levels |
 | --- | --- | --- |
@@ -209,7 +215,8 @@ jev_router/                the package
 ├── remote.py              optional remote access
 ├── doctor.py              health report
 ├── config/                models.json (catalog + policy), routes.json (task → tier), targets.json (tier → worker)
-├── templates/agents/      worker templates (rendered into ~/.claude/agents and ~/.codex/agents)
+├── templates/agents/      role templates fast/balanced/deep/test-worker.md (rendered into
+│                          ~/.claude/agents, ~/.codex/agents and ~/.gemini/config/agents)
 └── skills/                skills bundled with jev-router (cli-bridge)
 tests/                     unit tests, model-policy test
 eval/                      100 Hungarian + 100 English labelled prompts, evaluation script

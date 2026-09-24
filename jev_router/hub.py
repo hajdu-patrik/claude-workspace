@@ -16,8 +16,16 @@ Links are junctions on Windows and symlinks on macOS/Linux, one per skill rather
 whole folder: ~/.claude/skills also holds app-managed content (synced/), and a fully linked skills
 directory is a known Claude Code regression.
 
+Worker agents (one fixed model + effort each; Antigravity pins only a model tier):
+    ~/.claude/agents/<name>.md                    Claude Code subagents
+    ~/.codex/agents/<name>.toml + [agents.*]      Codex roles (block in ~/.codex/config.toml)
+    ~/.gemini/config/agents/<name>/agent.md       Antigravity subagents
+The body and description come from the template of the model's role (models.json 'role'):
+jev_router/templates/agents/<fast|balanced|deep|test>-worker.md.
+
 Safety: never deletes a real directory. Only junctions this tool can prove it owns (pointing into
 the hub or jev_router/skills/) are ever removed/replaced; a name collision is reported, not resolved.
+A stale generated agent file (marked GEN_MARK) is removed; its Antigravity folder only when then empty.
 """
 import itertools
 import json
@@ -42,6 +50,8 @@ AGY_SKILLS_JSON = P.PATHS["agy_skills_json"]
 CLAUDE_AGENTS = P.PATHS["claude_agents"]
 CODEX_AGENTS = P.PATHS["codex_agents"]
 CODEX_CONFIG = P.PATHS["codex_config"]
+AGY_AGENTS = P.PATHS["agy_agents"]
+DEFAULT_ROLE = "balanced"
 PROVIDERS = ("claude", "codex", "antigravity")  # narrowed by the installer to what is installed
 APP_MANAGED = {"synced"}  # folders inside ~/.claude/skills owned by the desktop app
 GEN_MARK = "generated-by: jev-router"
@@ -224,14 +234,18 @@ def _template(name):
     return _split_template(tpl) if tpl.exists() else ({}, "Do the delegated task carefully.")
 
 
+def _role_template(mdef):
+    """Template file of a model's role (models.json 'role'): fast-worker, balanced-worker, deep-worker."""
+    return f"{mdef.get('role') or DEFAULT_ROLE}-worker"
+
+
 def _generic_variants(provider, generic):
     """(agent name template, model, effort, template file) for every selectable model x every allowed
     effort under the provider's generic agent template."""
     from . import core  # local import: only needed here
-    tpl_name = "{model}-worker" if provider == "claude" else "codex-worker"
     for model, mdef in core.models_for(provider).items():
         for effort in mdef["levels"]:
-            yield generic, model, effort, tpl_name.format(model=model)
+            yield generic, model, effort, _role_template(mdef)
 
 
 def _tier_variants(tiers, generic):
@@ -250,9 +264,12 @@ def planned_agents():
        picks, a matching fixed agent/role exists.
     2) Tier-specific agents whose template isn't the provider's generic one (e.g. test-worker-*),
        for that tier's own effort range.
-    Body/description come from agents/<name>.md (Claude: <model>-worker.md, Codex: codex-worker.md)."""
+    3) Antigravity: one agent per model tier (effort None) - see _antigravity_agents.
+    Body/description come from templates/agents/<role>-worker.md (the model's role in models.json;
+    a tier agent such as test-worker-{effort} uses test-worker.md)."""
     targets = json.loads((PKG / "config" / "targets.json").read_text(encoding="utf-8"))
-    out, seen = [], set()
+    out = _antigravity_agents(targets) if "antigravity" in PROVIDERS else []
+    seen = set()
     for provider in (p for p in ("claude", "codex") if p in PROVIDERS):
         cfg = targets.get(provider, {})
         generic = cfg.get("agent_template")
@@ -265,7 +282,30 @@ def planned_agents():
             fm, body = _template(tpl_name)
             desc = (fm.get("description") or f"{model} worker").rstrip(".")
             out.append((provider, name, model, effort,
-                        f"{desc} Fixed model {model}, reasoning effort {effort}. Use when the [router] context names {name}.", body))
+                        f"{desc}. Fixed model {model}, reasoning effort {effort}. Use when the [router] context names {name}.", body))
+    return out
+
+
+def _antigravity_agents(targets):
+    """[(provider, name, tier, None, description, body)]: one agent per model tier. An Antigravity agent
+    pins only a tier (flash / pro, models.json 'agent_tier'), never an effort, so the name carries the
+    tier (targets.json antigravity.agent_template) and the first selectable model of a tier defines it."""
+    from . import core  # local import: only needed here
+    agent_tpl = targets.get("antigravity", {}).get("agent_template")
+    if not agent_tpl:
+        return []
+    out, seen = [], set()
+    tiered = [(m, d) for m, d in core.models_for("antigravity").items() if d.get("agent_tier")]
+    for model, mdef in tiered:
+        name = agent_tpl.format(tier=mdef["agent_tier"])
+        if name in seen:
+            continue
+        seen.add(name)
+        fm, body = _template(_role_template(mdef))
+        desc = (fm.get("description") or f"{model} worker").rstrip(".")
+        out.append(("antigravity", name, mdef["agent_tier"], None,
+                    f"{desc}. Model tier {mdef['agent_tier']} ({model}); Antigravity sets the reasoning effort. "
+                    f"Use when the [router] context names {name}.", body))
     return out
 
 
@@ -275,11 +315,18 @@ def _write_if_changed(path, content):
                                       path.write_text(content, encoding="utf-8")))
 
 
-def _remove_stale(folder, pattern, want, label):
+def _remove_stale(folder, pattern, want, label, name_of=lambda f: f.stem, remove=lambda f: f.unlink()):
     """Removes the generated files in `folder` that are no longer planned (never a hand-written one)."""
     for f in folder.glob(pattern) if folder.is_dir() else []:
-        if f.stem not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
-            act(f"remove stale generated {label} {f}", f.unlink)
+        if name_of(f) not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
+            act(f"remove stale generated {label} {f}", lambda f=f: remove(f))
+
+
+def _remove_agent_folder(agent_md):
+    """An Antigravity agent: its agent.md, then the folder - only when nothing else is left in it."""
+    agent_md.unlink()
+    if not any(agent_md.parent.iterdir()):
+        agent_md.parent.rmdir()
 
 
 def cmd_agents():
@@ -287,6 +334,19 @@ def cmd_agents():
     _write_claude_agents([a for a in plan if a[0] == "claude"])
     if "codex" in PROVIDERS:
         _write_codex_agents([a for a in plan if a[0] == "codex"])
+    if "antigravity" in PROVIDERS:
+        _write_antigravity_agents([a for a in plan if a[0] == "antigravity"])
+
+
+def _write_antigravity_agents(plan):
+    """Antigravity: <name>/agent.md per model tier, as a subagent only - selected as the main agent
+    (`agy --agent`), agy keeps the session's model. The system prompt sits under an H1 heading."""
+    for _, name, tier, _, desc, body in plan:
+        _write_if_changed(AGY_AGENTS / name / "agent.md",
+                          f"---\nname: {name}\ndescription: {json.dumps(desc)}\nmodel: {tier}\nsubagent: true\n"
+                          f"mainAgent: false\n# {GEN_MARK}\n---\n# Instructions\n{body}\n")
+    _remove_stale(AGY_AGENTS, "*/agent.md", {a[1] for a in plan}, "antigravity agent",
+                  name_of=lambda f: f.parent.name, remove=_remove_agent_folder)
 
 
 def _write_claude_agents(plan):

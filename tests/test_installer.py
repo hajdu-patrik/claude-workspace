@@ -194,6 +194,45 @@ def test_owned_is_real_containment(tmp_path, monkeypatch):
     assert not skills_hub.owned(tmp_path / "l2")
 
 
+def test_agents_for_every_provider_follow_the_model_role(monkeypatch):
+    """Claude and Codex: an agent per (model, effort) with its role's template; Antigravity: one per model tier."""
+    from jev_router import hub as skills_hub
+    monkeypatch.setattr(skills_hub, "PROVIDERS", ("claude", "codex", "antigravity"))
+    plan = {(p, name): (model, effort, desc, body) for p, name, model, effort, desc, body in skills_hub.planned_agents()}
+    deep = skills_hub._split_template(skills_hub.AGENT_TEMPLATES / "deep-worker.md")
+    fast = skills_hub._split_template(skills_hub.AGENT_TEMPLATES / "fast-worker.md")
+    assert plan["claude", "opus-worker-max"][3] == deep[1]
+    assert plan["codex", "gpt-5_6-terra-high"][2].startswith(deep[0]["description"].rstrip(".") + ". Fixed model gpt-5.6-terra")
+    assert plan["codex", "gpt-5_6-luna-low"][3] == fast[1]
+    assert plan["antigravity", "gemini-pro-worker"][:2] == ("pro", None)
+    assert plan["antigravity", "gemini-flash-worker"][0] == "flash"
+    assert not any(effort == "ultra" for _, effort, _, _ in plan.values())
+
+
+def test_antigravity_agent_files(tmp_path, monkeypatch, capsys):
+    """<name>/agent.md with a tier, subagent-only; stale generated agents go, hand-written ones stay."""
+    from jev_router import hub as skills_hub
+    agents = tmp_path / "agents"
+    for name, text in (("gemini-old-worker", f"---\nname: x\n# {skills_hub.GEN_MARK}\n---\n"), ("mine", "---\nname: mine\n---\n")):
+        (agents / name).mkdir(parents=True)
+        (agents / name / "agent.md").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(skills_hub, "AGY_AGENTS", agents)
+    monkeypatch.setattr(skills_hub, "PROVIDERS", ("antigravity",))
+    monkeypatch.setattr(skills_hub, "APPLY", True)
+    skills_hub.cmd_agents()
+    fm, body = skills_hub._split_template(agents / "gemini-pro-worker" / "agent.md")
+    assert fm["model"] == "pro"
+    assert fm["subagent"] == "true"
+    assert fm["mainAgent"] == "false"
+    assert json.loads(fm["description"]).startswith("Strong worker")
+    assert body.startswith("# Instructions\n")
+    assert not (agents / "gemini-old-worker").exists()
+    assert (agents / "mine" / "agent.md").exists()
+    capsys.readouterr()
+    skills_hub.cmd_agents()
+    assert "[DO]" not in capsys.readouterr().out  # idempotent
+
+
 def test_mcp_command_is_unquoted_interpreter(tmp_path, monkeypatch):
     monkeypatch.setattr(install_hooks, "SHIM_MCP", tmp_path / "bin" / "mcp_server.py")
     install_hooks.json_mcp(tmp_path / "mcp.json", "x", install_hooks.Writer(apply=True))

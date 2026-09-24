@@ -98,6 +98,8 @@ def report_skills(cfg_toml):
     ca = list(P.PATHS["claude_agents"].glob("*-worker-*.md")) if P.PATHS["claude_agents"].is_dir() else []
     line(len(ca) > 0, "Claude worker agents", f"{len(ca)}")
     line("[agents." in cfg_toml, "Codex worker roles", f"{cfg_toml.count('[agents.')}")
+    n_agy = count_in(P.PATHS["agy_agents"], lambda p: (p / "agent.md").is_file())
+    line(n_agy > 0, "Antigravity worker agents", f"{n_agy}")
 
 
 def report_config():

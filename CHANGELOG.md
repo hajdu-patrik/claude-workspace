@@ -24,8 +24,16 @@ dates are ISO 8601.
   Antigravity autostart entry after an agy update rewrote it and restarts anything not running.
 - The installer warns when it changes the Claude desktop config while the app runs – the app
   rewrites the file from memory, so the app has to be restarted.
+- Antigravity worker agents: `gemini-flash-worker` and `gemini-pro-worker` in
+  `~/.gemini/config/agents/<name>/agent.md` (model tier `flash` / `pro`, subagent only – Antigravity
+  agents cannot pin an effort, and as the main agent they keep the session's model). The deep tier
+  delegates to `gemini-pro-worker`; `doctor` counts them.
 
 ### Changed
+- Worker templates are per role instead of per model: `fast`, `balanced`, `deep` and `test-worker.md`,
+  chosen by each model's `role` in `models.json`. Codex roles get their model's instructions and
+  description (before, all 20 shared one generic text); a new model needs one line, not a template.
+  Generated descriptions read "… tasks. Fixed model …" (the full stop was missing).
 - The routing log records the worker a decision delegates to (`target_agent`).
 - Windows remote access runs entirely in the background from logon: Claude Remote Control and the
   new Codex remote app server (`codex app-server --remote-control --listen off`, task
