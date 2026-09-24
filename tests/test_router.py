@@ -29,6 +29,8 @@ def isolated(tmp_path, monkeypatch):
     """No test ever touches the real ~/.jev-router or ~/.skills, and never calls JEV."""
     monkeypatch.setattr(run_hook, "LOG_FILE", tmp_path / "routing.jsonl")
     monkeypatch.setattr(run_hook, "SEEN_FILE", tmp_path / "seen.json")
+    monkeypatch.setattr(core, "STATE_DIR", tmp_path)  # queue state, user config, model overrides
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setattr(skill_index, "load_catalog", lambda: CATALOG)
     monkeypatch.setattr(core, "BACKEND", "local")
     monkeypatch.delenv("ROUTER_MODE", raising=False)

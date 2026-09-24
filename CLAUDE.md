@@ -1,50 +1,40 @@
-Respond in the language of the user's prompt (Hungarian or English); the `[router]` context's
-"Respond in ..." line says which.
+# Working in this repository
 
-# Work rules
+jev-router: a prompt router for Claude Code, OpenAI Codex and Google Antigravity (see README.md).
+Everything in the repository is English and generic: no personal data, machine names, account
+details or absolute user paths. Per-user state belongs in `~/.jev-router/`, never in the repo.
 
-- Every prompt comes with a `[router]` context (from the global UserPromptSubmit hook, see
-  `router/`). Follow it: if it names a subagent (e.g. `opus-worker-xhigh`), delegate to it; if it
-  names a skill, use it; if it names the `cli-bridge` skill, use that.
-- `Parallelism:` line in the router context = the max number of EXTRA parallel agents (0-4,
-  strict token budget). "none" means do not fan out.
-- The router is a suggestion. If it's clearly wrong (e.g. sends a trivial question to Opus), you
-  may decide otherwise, but say why in one line.
-- If SAFETY appears in the context: list the exact actions, and only carry them out after an
-  explicit "yes" reply.
-- If the router says "unavailable", answer directly; don't try to fix it.
-- Manual override tags: Claude `#fable #sonnet #opus #codex #antigravity`; Codex / Antigravity
-  `#fast #main #deep`. `#norouter` / `#privat`: no routing, the prompt is never sent to TypeSafe.
-- Model-family policy (`router/models.json`): for Claude only sonnet / opus / fable, always via
-  the generic alias (never a pinned, dated model ID). Haiku can never be picked. Codex and
-  Antigravity targets are verified against this account's live model lists (see models.json).
-- Skills live in the shared hub `~/.skills` (linked into Claude Code, Codex and Antigravity by
-  `python router/skills_hub.py link --apply`). Repo-owned skills are in `skills/` here and are
-  exposed through the hub. The router's skill index is `~/.skills/catalog.json`
-  (`python router/skills_hub.py catalog`).
-- Worker agents (`<model>-worker-<effort>`, Codex `<model>-<effort>`) are generated from `agents/*.md` + `router/targets.json`
-  (`python router/skills_hub.py agents --apply`) into `~/.claude/agents` and `~/.codex/agents`;
-  edit the templates / targets, never the generated files.
-- Tests: `python -m pytest tests -q`; router quality: `python eval/eval_router.py`.
+## Answering
 
-# Project context (for every new session, incl. ones started remotely from the phone / another laptop)
+- Respond in the language of the user's prompt; the `[router]` context's "Respond in ..." line says which.
+- Every prompt carries a `[router]` context from the global hook. Follow it: delegate to the named
+  worker (e.g. `opus-worker-xhigh`), use the named skill, respect the `Parallelism:` line (the
+  maximum number of EXTRA parallel agents; "none" means do not fan out).
+- The router is a suggestion. If it is clearly wrong (e.g. long pasted text skews it), decide
+  otherwise and say why in one line.
+- `SAFETY:` in the context: list the exact actions and carry them out only after an explicit "yes".
+- `QUEUE:` / `CONCURRENCY:` in the context: earlier work is still running – finish or protect it,
+  never stop, restart or overwrite it.
+- Overrides: Claude `#fable #sonnet #opus #codex #antigravity`; Codex / Antigravity
+  `#fast #main #deep`; `#norouter` / `#privat` skip routing (nothing is sent to TypeSafe).
 
-Machine: "Razer Blade-16" (home PC) - Windows 11, RTX 4090 Laptop. Remote access: Claude
-Remote Control server `Razer Blade-16` (start-rc.cmd, `ClaudeRemoteControl` logon task; the Claude
-app starts at logon too), Antigravity daemon `Razer Blade-16`, Codex via the ChatGPT
-app (`ChatGPTAutostart` logon task + one-time "Control this PC" pairing). Cloud sessions are a
-separate environment ("Claude GitHub Session") - don't mix them up.
+## Conventions
 
-Goal of this repo: one prompt router for Claude Code, Codex and Antigravity (all modes: CLI,
-desktop Code tab, Chat/Cowork via MCP). Per prompt JEV (TypeSafe; local mock until the account
-exists) decides model (from every selectable model) + reasoning effort (never `ultra`) + skill; reply language follows the prompt (hu/en).
-All skills live in the shared hub `~/.skills` and are usable cross-tool. Details: README.md.
+- Python 3.10+, standard library only (no third-party runtime dependencies). Must work on
+  Windows, macOS and Linux – go through `router/platforms.py` for paths, links and executables.
+- Hooks must never block or crash the host tool: catch everything, always exit 0.
+- Model policy (`router/models.json`): Claude only via generic aliases (fable / sonnet / opus),
+  never Haiku, never a dated model ID; `ultra` effort is banned for every provider.
+- Worker agents are generated from `agents/*.md` + `router/targets.json` + `router/models.json`
+  (`python router/skills_hub.py agents --apply`) – edit the sources, never the generated files.
+- Installers are idempotent and dry-run by default; changed user config files get a `.bak` copy.
 
-Status (2026-09-24): done and live-tested - hooks for all 3 tools, all models/efforts verified live (models.json), generated
-worker agents (Claude 18, Codex 20 roles),
-skill hub (149 skills, 187 in catalog), MCP router, cli-bridge, 68 unit tests, eval 100 hu + 100 en
-(PASS), Handy installed for Hungarian dictation, phone access for Claude + Antigravity.
-Open (user's manual steps): trust the Codex hook (`codex` -> /hooks); restart the Claude app and
-add the route_prompt line to Personal preferences; Handy first-run setup (Whisper Large v3,
-Hungarian, hotkey); pair Codex in the ChatGPT app; set TYPESAFE_API_KEY when JEV access arrives.
-Health check: `python scripts/check_tools.py`.
+## Checks before committing
+
+```bash
+python -m pytest tests -q
+python eval/eval_router.py
+python scripts/check_models.py
+```
+
+Record user-visible changes in `CHANGELOG.md` (Keep a Changelog style).

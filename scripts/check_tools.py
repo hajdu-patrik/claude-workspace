@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
-"""Read-only health report of the whole setup: tool versions, logins, hooks, skills hub, agents,
-MCP registrations, recent router activity. Changes nothing.   Usage: python scripts/check_tools.py
+"""Read-only health report: installed tools and logins, hooks, MCP registrations, skill hub, agents,
+configuration and recent router activity. Changes nothing.   Usage: python scripts/check_tools.py
 """
 import json
 import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-HOME = Path.home()
-ROOT = Path(__file__).resolve().parents[1]
-AGY = shutil.which("agy") or str(Path(os.environ.get("LOCALAPPDATA", "")) / "agy" / "bin" / "agy.exe")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "router"))
+import platforms as P  # noqa: E402
 
-
-def run(argv, timeout=30):
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
-                           encoding="utf-8", errors="replace")
-        return (r.stdout or r.stderr).strip().splitlines()[0] if (r.stdout or r.stderr).strip() else "(no output)"
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"(unavailable: {type(exc).__name__})"
+HOME = P.HOME
 
 
 def line(ok, label, detail=""):
@@ -34,64 +24,67 @@ def jload(p):
         return None
 
 
+def has_hook(cfg, event):
+    return any("jev-router" in json.dumps(g) for g in (cfg or {}).get("hooks", {}).get(event, []))
+
+
 def main():
     print("== Tools")
-    for label, argv in [("Claude Code CLI", ["claude", "--version"]), ("Codex CLI", ["codex", "--version"]),
-                        ("Codex login", ["codex", "login", "status"]), ("Antigravity CLI", [AGY, "--version"]),
-                        ("Python", [sys.executable, "--version"]), ("Git", ["git", "--version"])]:
-        exe = shutil.which(argv[0]) or (argv[0] if Path(argv[0]).is_file() else None)
-        line(bool(exe), label, run([exe] + argv[1:]) if exe else "not found")  # resolved path: npm .cmd shims
-    apps = run(["powershell", "-NoProfile", "-Command",
-                "(Get-AppxPackage | ? { $_.Name -match '^(Claude|OpenAI.Codex)$' } | % { $_.Name + ' ' + $_.Version }) -join '; '"])
-    line("Claude" in apps, "Desktop apps (MSIX)", apps)
-    line((Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "antigravity").is_dir(), "Antigravity desktop app")
+    for info in P.detect(deep=False).values():
+        li = {True: "logged in", False: "NOT logged in", None: ""}[info["logged_in"]]
+        line(info["installed"], info["label"], f"{info['version'] or 'not installed'}  {li}".strip())
 
     print("\n== Router hooks")
-    shim = HOME / ".jev-router" / "bin" / "run_hook.py"
-    line(shim.is_file(), "hook shim", str(shim))
-    cs = jload(HOME / ".claude" / "settings.json") or {}
-    line("jev-router" in json.dumps(cs.get("hooks", {})), "Claude UserPromptSubmit")
-    line("jev-router" in json.dumps(jload(HOME / ".codex" / "hooks.json") or {}), "Codex UserPromptSubmit", "(trust via `codex` -> /hooks)")
-    line("jev-router" in json.dumps(jload(HOME / ".gemini" / "config" / "hooks.json") or {}), "Antigravity PreInvocation")
+    line((HOME / ".jev-router" / "bin" / "run_hook.py").is_file(), "hook shim", "~/.jev-router/bin/run_hook.py")
+    cs, cx = jload(P.PATHS["claude_settings"]), jload(P.PATHS["codex_hooks"])
+    agy = (jload(P.PATHS["agy_hooks"]) or {}).get("router", {})
+    line(has_hook(cs, "UserPromptSubmit") and has_hook(cs, "Stop"), "Claude UserPromptSubmit + Stop")
+    line(has_hook(cx, "UserPromptSubmit") and has_hook(cx, "Stop"), "Codex UserPromptSubmit + Stop", "(trust once: codex -> /hooks)")
+    line("PreInvocation" in agy and "Stop" in agy, "Antigravity PreInvocation + Stop")
 
     print("\n== MCP router (hook-less modes)")
-    line("jev-router" in json.dumps(jload(Path(os.environ.get("APPDATA", "")) / "Claude" / "claude_desktop_config.json") or {}),
-         "Claude desktop (Chat/Cowork)")
-    cfg = (HOME / ".codex" / "config.toml").read_text(encoding="utf-8") if (HOME / ".codex" / "config.toml").exists() else ""
-    line("[mcp_servers.jev-router]" in cfg, "Codex")
-    line("jev-router" in json.dumps(jload(HOME / ".gemini" / "config" / "mcp_config.json") or {}), "Antigravity")
+    line("jev-router" in json.dumps(jload(P.claude_desktop_config()) or {}), "Claude desktop (Chat/Cowork)")
+    cfg_toml = P.PATHS["codex_config"].read_text(encoding="utf-8") if P.PATHS["codex_config"].exists() else ""
+    line("[mcp_servers.jev-router]" in cfg_toml, "Codex")
+    line("jev-router" in json.dumps(jload(P.PATHS["agy_mcp"]) or {}), "Antigravity")
 
-    print("\n== Skills hub + agents")
+    print("\n== Skill hub + agents")
     hub = HOME / ".skills"
     n_hub = sum(1 for p in hub.iterdir() if (p / "SKILL.md").is_file()) if hub.is_dir() else 0
     line(n_hub > 0, "~/.skills", f"{n_hub} skills")
-    for label, base in [("Claude links", HOME / ".claude" / "skills"), ("Codex links", HOME / ".agents" / "skills")]:
-        n = sum(1 for p in base.iterdir() if p.is_junction()) if base.is_dir() else 0
-        line(n >= n_hub and n > 0, label, f"{n} junctions")
-    agy = jload(HOME / ".gemini" / "config" / "skills.json") or {}
-    line(any(e.get("path", "").endswith("/.skills") for e in agy.get("entries", [])), "Antigravity skills.json -> ~/.skills")
+    for label, base in [("Claude links", P.PATHS["claude_skills"]), ("Codex links", P.PATHS["codex_skills"])]:
+        n = sum(1 for p in base.iterdir() if P.is_link(p)) if base.is_dir() else 0
+        line(n > 0, label, f"{n} links")
+    agy_skills = jload(P.PATHS["agy_skills_json"]) or {}
+    line(any(e.get("path", "").endswith("/.skills") for e in agy_skills.get("entries", [])), "Antigravity skills.json")
     cat = jload(hub / "catalog.json") or {}
     line(bool(cat.get("skills")), "catalog.json", f"{len(cat.get('skills', []))} skills, generated {cat.get('generated', '-')}")
-    ca = list((HOME / ".claude" / "agents").glob("*-worker-*.md"))
+    ca = list(P.PATHS["claude_agents"].glob("*-worker-*.md")) if P.PATHS["claude_agents"].is_dir() else []
     line(len(ca) > 0, "Claude worker agents", f"{len(ca)}")
-    line("[agents." in cfg, "Codex worker roles", f"{cfg.count('[agents.')}")
+    line("[agents." in cfg_toml, "Codex worker roles", f"{cfg_toml.count('[agents.')}")
+
+    print("\n== Configuration (~/.jev-router/config.json)")
+    cfg = jload(HOME / ".jev-router" / "config.json") or {}
+    jev = os.environ.get("TYPESAFE_API_KEY") or cfg.get("typesafe_api_key")
+    line(True, "Decision backend", "JEV (token configured)" if jev else "built-in local model (no JEV token)")
+    line(True, "Remote access name", cfg.get("remote_name") or "not set up (python install.py remote)")
+    line(True, "Per-account model overrides", "yes" if (HOME / ".jev-router" / "models.local.json").exists()
+         else "no (python install.py models --probe)")
 
     print("\n== Router activity (~/.jev-router/logs/routing.jsonl)")
     log = HOME / ".jev-router" / "logs" / "routing.jsonl"
+    last = {}
     if log.exists():
-        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
-        by = {}
-        for l in lines:
+        for raw in log.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]:
             try:
-                e = json.loads(l)
+                e = json.loads(raw)
             except ValueError:
                 continue
-            by[e.get("provider")] = e.get("ts")
-        for p, ts in sorted(by.items()):
-            line(True, f"last {p} prompt", ts)
-    else:
+            last[e.get("provider")] = e.get("ts")
+    for p, ts in sorted(last.items()):
+        line(True, f"last {p} prompt", ts)
+    if not last:
         line(False, "no routed prompt logged yet")
-    print(f"\nBackend: {'JEV (TYPESAFE_API_KEY set)' if os.environ.get('TYPESAFE_API_KEY') else 'local mock (no TYPESAFE_API_KEY)'}")
 
 
 if __name__ == "__main__":

@@ -1,107 +1,87 @@
 # Changelog
 
-All notable changes, verification results and open items of the JEV prompt router.
-Dates are ISO (`YYYY-MM-DD`); newest first.
+All notable changes to this project. The format follows [Keep a Changelog](https://keepachangelog.com/);
+dates are ISO 8601.
 
 ---
 
-## [2.3.0] – 2026-09-24 · Remote access, naming & parallelism
+## [3.0.0] – 2026-09-24 · Open-source release
 
 ### Added
-- **Parallel-agent decision (0 – +4):** new JEV question `agents` with strict criteria; code-level
-  clamps (one lower below 0.7 confidence, at most +1 unless hard, cap `ROUTER_MAX_EXTRA_AGENTS`).
-  Rendered as `Parallelism: none` / `Parallelism: up to N extra agent(s)`. All 200 eval prompts → 0.
-- **JEV model question:** every selectable model of the provider is offered; the effort is clamped to
-  the chosen model's real levels. Codex hook passes the session's model so a tier can stay in-session.
-- Model-named workers: Claude `<fable|sonnet|opus>-worker-<effort>` (15) + `test-worker-*` (3);
-  Codex roles `<model>-<effort>` (20). Old `fast/main/deep-worker-*` removed automatically.
-- Remote access under one name, **Razer Blade-16**, for Claude (Remote Control server, logon task,
-  Claude app autostart, new sessions auto-connected), Antigravity (`agy remote-control --name`) and
-  ChatGPT/Codex (`ChatGPTAutostart` logon task; phone paired via *Control this PC*).
-- Project context section in `CLAUDE.md` for sessions started remotely.
-- `README.md` rewritten in portfolio style; `LICENSE.md` (proprietary) added; status moved here.
+- **Cross-platform installer** `install.py` (Windows, macOS, Linux): detects Claude Code, Codex and
+  Antigravity, reports install / login state and guides the login, asks for an optional JEV token,
+  connects hooks + MCP for every logged-in tool, migrates all tools' skills into `~/.skills`,
+  generates workers, offers remote access and speech-to-text. Sub-commands `detect`,
+  `models --probe`, `remote`, `uninstall`; flags `--yes`, `--dry-run`, `--providers`, `--jev-token`.
+- **Queue protection** (`router/queue_state.py`): `Stop` hooks for all three tools; a prompt sent
+  while earlier work in the same session is unfinished gets a `QUEUE:` instruction, a prompt in a
+  folder where another session is working gets a `CONCURRENCY:` warning. Entries expire after
+  `ROUTER_QUEUE_TTL_MIN`.
+- **OS abstraction** (`router/platforms.py`): junctions on Windows, symlinks on macOS/Linux; config
+  locations per OS; executable discovery; login detection.
+- **Optional remote-access module** (`router/remote.py`, `docs/remote-access.md`) with a
+  user-chosen machine name (default: hostname) stored in `~/.jev-router/config.json`.
+- JEV token in `~/.jev-router/config.json` (environment variable still wins).
+- Per-account model availability: `python install.py models --probe` writes
+  `~/.jev-router/models.local.json`, which overrides the catalog's defaults.
+- `docs/speech-to-text.md` (install, model choice by hardware, phone dictation).
+- CI on Windows, macOS and Linux.
 
 ### Changed
-- **`ultra` effort banned for every provider** (`models.json` → `policy.excluded_efforts`): never
-  offered to JEV, stripped from answers, no agent/role generated.
-- Codex model list re-verified **per model against the ChatGPT account** (see Findings).
-- `probe_models.py` reads `codex debug models` instead of the stale `models_cache.json`.
-- `skills_hub.py agents` keeps Codex's own tables (e.g. `[hooks.state]` hook trust) outside the
-  generated `[agents.*]` block.
-- Antigravity `skills.json` also lists the repo's `skills/` (agy does not follow junctions).
+- License: **MIT** (was proprietary).
+- All documentation rewritten in English and made generic; no personal or machine data.
+- Skill migration covers every tool's personal skill folder, not only Claude's.
+- Hooks call the absolute Python interpreter (unless its path contains spaces).
 
 ### Removed
-- `CodexRemoteControl` scheduled task (cannot work on this machine – see Findings).
+- Windows-only `scripts/setup-windows.ps1` and `start-rc.cmd` (replaced by `install.py`).
 
-## [2.0.0] – 2026-09-23 · Router v2
+## [2.3.0] – 2026-09-24
 
 ### Added
-- Global hooks for **Claude Code, Codex CLI and Antigravity CLI** via space-free shims in
-  `~/.jev-router/bin` (Antigravity runs hooks through `cmd /c`, which breaks on quoted paths with spaces).
-- Shared skill hub `~/.skills` (148 skills migrated from `~/.claude/skills`, per-skill junctions into
-  Claude and Codex) + machine-wide skill catalog with Hungarian → English glossary pre-filter.
-- Stdio MCP server (`route_prompt`, `list_skills`, `get_skill`) registered in Claude desktop, Codex and
-  Antigravity; `claude-chat` target for hook-less Chat/Cowork.
+- Parallel-agent decision (0 – +4) with code-level clamps.
+- JEV `model` question over every selectable model; effort clamped to the chosen model.
+- Model-named workers: Claude `<model>-worker-<effort>`, Codex roles `<model>-<effort>`.
+
+### Changed
+- `ultra` effort banned for every provider.
+- Codex catalog verified per model; `codex debug models` shows the CLI's catalog, not what an
+  account may use.
+- Codex's own `config.toml` tables (hook trust) are kept outside the generated agents block.
+- Antigravity `skills.json` lists the repository's `skills/` too (agy does not follow links).
+
+## [2.0.0] – 2026-09-23
+
+### Added
+- Global hooks for Claude Code, Codex and Antigravity via shims in `~/.jev-router/bin`.
+- Shared skill folder `~/.skills` and a machine-wide skill catalog with a Hungarian → English glossary.
+- Stdio MCP server (`route_prompt`, `list_skills`, `get_skill`) for hook-less modes.
 - Hungarian / English language detection; answer language follows the prompt.
-- 100 Hungarian + 100 English labelled evaluation prompts through the full pipeline; pytest suite.
-- `scripts/check_tools.py` health report; `cli-bridge` skill with `--model` / `--effort`.
-- Hungarian dictation: Handy (Whisper, offline) installed.
+- 100 + 100 labelled evaluation prompts; pytest suite; health report.
 
 ### Fixed
-- Global hook read its config from the *current project* (`CLAUDE_PROJECT_DIR`) – now from the repo.
-- Subagents existed only inside this repo – now user-level and generated.
-- Destructive regex false positives ("Remove the unused import", "sort in order") – now object-bound.
+- The global hook read its configuration from the current project instead of the repository.
+- Subagents existed only inside the repository.
+- Destructive-request false positives ("remove the unused import", "sort in order").
 - Math false positive on OAuth codes; invalid Codex effort levels; Antigravity hook firing on every
-  model call; harness notifications being routed; secrets in the routing log (now redacted).
+  model call; harness notifications being routed; secrets in the routing log.
 
-## [1.x] – 2026-09-23 · Initial router
+## [1.0.0] – 2026-09-23
 
-- Phase-1 scaffold: Claude hook, routes, subagents, cloud mode, Windows setup script.
-- Model-family policy (Haiku excluded, generic aliases), local keyword backend with JEV fallback,
-  spoken task prefixes, UTF-8 BOM tolerant hook stdin.
+- Initial router: Claude Code hook, routing table, subagents, cloud mode, model-family policy,
+  local keyword classifier with JEV fallback.
 
 ---
 
-## Verification snapshot (2026-09-24)
+## Known limitations
 
-| Check | Result |
-| --- | --- |
-| Unit tests | 78 passed |
-| Eval – task accuracy | HU 91 % · EN 90 % (target ≥ 85 %) |
-| Eval – destructive recall / false positives | 100 % / 0 % |
-| Eval – reply language | 100 % |
-| Claude CLI (foreign folder) | hook fires, hu + en, delegation to a generated worker observed |
-| Codex CLI + ChatGPT app (Codex mode) | hook fires (trusted), roles visible to `spawn_agent` |
-| Antigravity CLI | transcript parsing, once-per-turn injection, cross-tool skill suggestion |
-| Skills visible | Claude all hub skills; Codex and Antigravity spot checks all present |
-| cli-bridge | Codex and Antigravity round-trips OK |
-| MCP | `route_prompt` via a real MCP client, SKILL.md returned inline |
-| Remote access | Claude RC server + session online; ChatGPT *Control this PC* on, phone paired |
-
-## Findings (verified live)
-
-- **Codex models on a ChatGPT account:** working – gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna,
-  gpt-reserve. Rejected – gpt-6-astra, gpt-6-sol, gpt-5.6-sol ("not supported when using Codex with a
-  ChatGPT account"), gpt-5.5 (404). `codex debug models` lists the binary's catalog, not the account's.
-- **Codex remote-control daemon** cannot detach on this Windows build: every process, Explorer
-  included, runs inside a Job Object without breakaway (tried shell, Task Scheduler, WMI, Explorer).
-  The ChatGPT desktop app hosts the remote connection instead.
-- **Antigravity:** no prompt-submit hook (only `PreInvocation`); `skills.json` paths must be absolute
-  (`~/` rejected despite the docs); junctions inside a skills entry are not followed; the desktop app
-  2.17 has no Remote Control toggle – the CLI daemon provides it.
-- **Claude:** hooks cannot switch model or effort (hence generated workers); Cowork and claude.ai chat
-  run no hooks (hence MCP); the desktop `/` menu does not list junction-linked skills (model still uses them).
-- The ChatGPT app's *Hooks* settings page shows "No hooks found" although the hook runs.
-- Router misclassifies very long pasted content (e.g. an English README pasted into a Hungarian
-  prompt): language, difficulty and SAFETY follow the pasted text.
-
-## Open items
-
-- [ ] JEV / TypeSafe account → set `TYPESAFE_API_KEY` (local model until then).
-- [ ] Cloud sandboxes: Claude – connect GitHub on claude.ai/code and name the environment
-      "Claude GitHub Session"; Codex – create an environment on chatgpt.com/codex (plan may limit it).
-- [ ] Claude Chat/Cowork: add the `route_prompt` line to Personal preferences; restart the Claude app.
-- [ ] Verify "Razer Blade-16" on antigravity.google.com from the phone.
-- [ ] Handy: select Whisper Large v3 after download, set language to Hungarian.
-- [ ] Optional: keep the PC awake on AC power (currently only the apps' own keep-awake settings).
-- [ ] Improve routing of long pasted content (weight the user's own lines over quoted text).
+- Hooks cannot switch the running model; model choice is enforced through generated workers.
+  Antigravity has no fixed-model agents, so its model choice is advisory.
+- Claude desktop *Chat/Cowork* and ChatGPT's plain chat run no hooks. Chat/Cowork is covered by the
+  MCP tool (called when the personal-preferences instruction is set); plain ChatGPT chat is not.
+- The Claude desktop `/` menu does not list link-based skills; the model still loads them.
+- Antigravity `skills.json` paths must be absolute, and links inside a skills entry are not followed.
+- On Windows, the Codex remote-control daemon cannot detach when every process runs inside a Job
+  Object; the ChatGPT desktop app hosts remote access instead.
+- The built-in classifier weighs pasted text like the user's own words; very long pasted English text
+  can make it pick English or a higher difficulty for a Hungarian request.

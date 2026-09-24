@@ -224,6 +224,30 @@ def load_json(name, default):
         return default
 
 
+def user_config():
+    """Per-user settings written by the installer (~/.jev-router/config.json): JEV token, remote
+    machine name, ... Never part of the repository."""
+    try:
+        return json.loads((STATE_DIR / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def jev_key():
+    """TypeSafe/JEV token: the environment wins, then the installer's config file."""
+    return os.environ.get("TYPESAFE_API_KEY") or user_config().get("typesafe_api_key") or None
+
+
+def model_overrides():
+    """Per-user model availability (~/.jev-router/models.local.json, written by
+    `python install.py models --probe`): {provider: {model_id: {"selectable": bool}}}. The repo's
+    models.json is a generic catalog; what a given account can actually use differs per plan."""
+    try:
+        return json.loads((STATE_DIR / "models.local.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def base_provider(provider):
     """'claude-chat' (Claude desktop Chat/Cowork via MCP) shares Claude's routes/models/skills."""
     return provider.split("-")[0]
@@ -243,10 +267,11 @@ def models_for(provider):
     with 'levels' already stripped of the excluded efforts."""
     cfg = load_json("models.json", {})
     m = cfg.get(provider) or cfg.get(base_provider(provider)) or {}
+    local = model_overrides().get(base_provider(provider), {})
     banned = excluded_efforts()
     out = {}
     for model in m.get("models", []):
-        if model.get("selectable"):
+        if local.get(model["id"], {}).get("selectable", model.get("selectable")):
             out[model["id"]] = dict(model, levels=[l for l in model.get("levels", []) if l not in banned])
     return out
 
@@ -318,9 +343,9 @@ def build_questions(skills, effort=None, models=None):
 
 
 def ask_jev(prompt, questions):
-    key = os.environ.get("TYPESAFE_API_KEY")
+    key = jev_key()
     if not key:
-        raise RuntimeError("TYPESAFE_API_KEY is missing")
+        raise RuntimeError("no JEV token (TYPESAFE_API_KEY or ~/.jev-router/config.json)")
     body = json.dumps({"state": prompt[:MAX_STATE_CHARS], "model": JEV_MODEL, "questions": questions}).encode("utf-8")
     req = urllib.request.Request(API_URL, data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
@@ -331,7 +356,7 @@ def ask_jev(prompt, questions):
 def use_jev(backend=None):
     if backend:
         return backend == "jev"
-    return BACKEND == "jev" or (BACKEND == "auto" and bool(os.environ.get("TYPESAFE_API_KEY")))
+    return BACKEND == "jev" or (BACKEND == "auto" and bool(jev_key()))
 
 
 def classify(prompt, skills=None, backend=None, effort=None, models=None):

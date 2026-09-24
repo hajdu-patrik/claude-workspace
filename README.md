@@ -1,103 +1,170 @@
-# JEV Prompt Router for Claude Code, Codex & Antigravity
+# jev-router – One Prompt Router for Claude Code, Codex & Antigravity
 
-![Python](https://img.shields.io/badge/Python-3.14-3776AB?style=flat&logo=python&logoColor=white)
-![Stdlib Only](https://img.shields.io/badge/Dependencies-Stdlib_Only-2E7D32?style=flat)
-![Claude Code](https://img.shields.io/badge/Claude_Code-Hook_%2B_Agents-D97757?style=flat&logo=anthropic&logoColor=white)
-![Codex](https://img.shields.io/badge/Codex_CLI-Hook_%2B_Roles-412991?style=flat&logo=openai&logoColor=white)
-![Antigravity](https://img.shields.io/badge/Antigravity-PreInvocation_Hook-4285F4?style=flat&logo=google&logoColor=white)
-![MCP](https://img.shields.io/badge/MCP-stdio_Server-000000?style=flat)
-![Windows](https://img.shields.io/badge/Platform-Windows_11-0078D6?style=flat&logo=windows&logoColor=white)
-![Tests](https://img.shields.io/badge/Tests-78_passing-success?style=flat&logo=pytest&logoColor=white)
-![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat&logo=python&logoColor=white)
+![Stdlib Only](https://img.shields.io/badge/Dependencies-None-2E7D32?style=flat)
+![Claude Code](https://img.shields.io/badge/Claude_Code-supported-D97757?style=flat&logo=anthropic&logoColor=white)
+![Codex](https://img.shields.io/badge/OpenAI_Codex-supported-412991?style=flat&logo=openai&logoColor=white)
+![Antigravity](https://img.shields.io/badge/Google_Antigravity-supported-4285F4?style=flat&logo=google&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-stdio_server-000000?style=flat)
+![Platforms](https://img.shields.io/badge/Platforms-Windows_%7C_macOS_%7C_Linux-555555?style=flat)
+![License](https://img.shields.io/badge/License-MIT-yellow?style=flat)
 
-A single prompt router that runs **before every prompt** in Claude Code, OpenAI Codex and Google
-Antigravity – in every project, in the desktop apps, from the phone and in hook-less chat modes.
+**jev-router** runs before every prompt you send to Claude Code, OpenAI Codex or Google Antigravity –
+in every project, in the desktop apps and in remote sessions – and decides for that single request:
 
-For each request the router decides **which model, which reasoning effort, how many parallel agents
-and which skill** to use, adds a safety gate for irreversible actions, and makes the model answer in
-the language of the prompt (Hungarian or English). The decision maker is **JEV (TypeSafe)**; until
-an account is available, a local classifier with the exact same answer schema stands in for it.
+* **which model** and **which reasoning effort** to use,
+* **how many extra agents** may work in parallel (strict token budget),
+* **which skill** fits – from one shared folder that all three tools read,
+* whether the request is **irreversible** (then the model must ask before acting),
+* **which language** to answer in (the language of the prompt).
+
+It also **protects running work**: a prompt sent while an earlier one is still being processed is
+queued behind it and must not stop or overwrite it.
+
+Decisions come from **JEV (TypeSafe)** when you configure a token. Without one, a built-in local
+classifier with the same answer format decides – everything works out of the box.
 
 ---
 
-## ✨ Key Engineering Features
+## 🚀 Quick Start
 
-* **One Core, Three Hosts:** A provider-independent core (`router/core.py`) is reached through each
-  tool's native pre-prompt hook – Claude `UserPromptSubmit`, Codex `UserPromptSubmit`, Antigravity
-  `PreInvocation` (prompt read back from the transcript, injected once per turn).
-* **Enforced Model & Effort Selection:** Hooks cannot switch the running model, so every decision is
-  enforced by delegating to a **generated worker with a fixed model and effort** – one Claude subagent
-  or Codex role for every (model, effort) pair that is actually available on the account.
-* **Hard Policy in Code, Not in Prompts:** `ultra` effort is never offered and is stripped from any
-  answer; Haiku and pinned model IDs are rejected; efforts are clamped to what the chosen model
-  really supports; a regex safety net backs up the model's own "destructive" verdict.
-* **Strict Parallelism Budget:** JEV picks 0 – +4 extra agents per task, with code-level clamps
-  (one lower on low confidence, at most +1 unless the task is hard), because agents multiply tokens.
-* **Shared Skill Hub:** Every skill lives once in `~/.skills` and is linked into all three tools; a
-  machine-wide catalog lets the router pick a skill – even one that belongs to another tool.
-* **Hook-less Modes Covered:** A dependency-free stdio **MCP server** exposes `route_prompt`,
-  `list_skills` and `get_skill` to Claude desktop Chat/Cowork, Codex and Antigravity.
-* **Bilingual by Design:** Hungarian + English keyword model, language detection, and 100 + 100
-  labelled evaluation prompts measured through the full pipeline.
-* **Fail-Open & Private:** The hook never blocks a prompt, falls back from JEV to the local model on
-  any error, and logs only a redacted, truncated prompt (`#privat` / `#norouter` skip routing).
+Requirements: Python 3.10+ and at least one of [Claude Code](https://code.claude.com/docs/en/quickstart),
+[Codex CLI](https://developers.openai.com/codex) or [Antigravity CLI](https://antigravity.google/docs/cli/install/).
+
+```bash
+git clone <this repository> jev-router
+cd jev-router
+python install.py
+```
+
+The installer walks you through five steps:
+
+1. **Detect** which of Claude Code, Codex and Antigravity are installed and logged in, and tell you
+   how to log in to the ones that are not.
+2. **JEV token** – paste it, or press Enter to use the built-in local classifier.
+3. **Hooks + MCP server** for every logged-in tool.
+4. **Shared skill folder** `~/.skills` – existing skills of every tool are moved there and linked
+   back, so each tool sees all of them; worker agents are generated for every model × effort.
+5. **Optional extras** – remote access from your phone, speech-to-text.
+
+Every change is shown first, changed config files get a `.bak` copy, and re-running is safe.
+Preview without changing anything: `python install.py --dry-run`.
+
+| Command | Purpose |
+| --- | --- |
+| `python install.py detect` | report installed / logged-in tools |
+| `python install.py models --probe` | test which models your accounts may use (stored per user) |
+| `python install.py remote --name "My PC"` | remote access from other devices ([guide](docs/remote-access.md)) |
+| `python install.py uninstall` | remove hooks, MCP entries and remote access (skills stay) |
+| `python scripts/check_tools.py` | health report |
+
+**One-time steps after installing:** Codex runs a new hook only after you trust it (`codex` → `/hooks`).
+For Claude desktop *Chat/Cowork*, restart the app and add to *Settings → Profile → Personal preferences*:
+*"Before answering any new request, call the jev-router route_prompt tool with my message and follow its instructions."*
 
 ---
 
 ## 🧭 How It Works
 
 ```
-prompt ─► hook / MCP tool ─► core.route()
-                               ├─ lang.detect()            hu | en
-                               ├─ is_destructive()         regex safety net (+ JEV verdict)
-                               ├─ skill_index.prefilter()  skill catalog → ≤ 8 candidates
-                               ├─ classify()               JEV (TYPESAFE_API_KEY) or local model
-                               ├─ decide()                 routes.json: task × difficulty → tier
-                               └─ render()                 targets.json: tier → agent / model / effort
-─► "[router] … Delegate to `opus-worker-xhigh` (opus, effort xhigh). Parallelism: none … Respond in Hungarian."
+prompt ─► hook / MCP tool ─► router/core.route()
+                               ├─ lang.detect()             answer language
+                               ├─ is_destructive()          regex safety net (+ JEV verdict)
+                               ├─ skill_index.prefilter()   shared skill catalog → ≤ 8 candidates
+                               ├─ classify()                JEV (token) or built-in classifier
+                               ├─ decide()                  routes.json: task × difficulty → tier
+                               └─ render()                  targets.json: tier → worker, model, effort
+       + queue_state            earlier work still running? → "finish it first"
+─► "[router] … Delegate to `opus-worker-xhigh` (opus, effort xhigh). Parallelism: none. Respond in English."
 ```
 
 | Surface | Mechanism |
 | --- | --- |
-| Claude Code CLI, desktop Code tab, Remote Control | `UserPromptSubmit` hook (`~/.claude/settings.json`) |
-| Codex CLI, ChatGPT app (Codex mode) | `UserPromptSubmit` hook (`~/.codex/hooks.json`) |
-| Antigravity CLI & app | `PreInvocation` hook (`~/.gemini/config/hooks.json`) |
-| Claude desktop Chat / Cowork | MCP tool `route_prompt` |
-| Claude Code on the web (cloud) | project hook with `--cloud-only` (routes to `main`) |
+| Claude Code (CLI, desktop *Code*, Remote Control) | `UserPromptSubmit` + `Stop` hooks |
+| Codex (CLI, ChatGPT app in Codex mode) | `UserPromptSubmit` + `Stop` hooks |
+| Antigravity (CLI, desktop app) | `PreInvocation` + `Stop` hooks (prompt read from the transcript, injected once per turn) |
+| Claude desktop *Chat / Cowork* (no hooks there) | MCP tool `route_prompt` |
+| Claude Code on the web (cloud sandbox) | project hook with `--cloud-only` |
 
----
+### Model and effort are enforced, not suggested
 
-## 🧠 Models, Effort & Parallelism
+No tool lets a hook switch the running model. jev-router therefore generates one **worker agent per
+(model, effort) pair** – Claude subagents `<model>-worker-<effort>` (plus `test-worker-<effort>`),
+Codex roles `<model>-<effort>` – and the router delegates to the right one. Antigravity has no
+fixed-model agents, so its model choice is advisory (or enforced through the `cli-bridge` skill).
 
-The router only offers models verified to work on this machine's accounts (`router/models.json`).
+| Provider | Models (catalog: `router/models.json`) | Effort levels |
+| --- | --- | --- |
+| Claude | fable, sonnet, opus – generic aliases only, never Haiku | low · medium · high · xhigh · max |
+| Codex | gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, gpt-reserve by default; more after `models --probe` | low … max (per model) |
+| Antigravity | Gemini 3.8 / 3.7 / 3.6 Flash, Gemini 3.1 Pro, Claude Sonnet/Opus 4.6, GPT-OSS 120B | part of the model name |
 
-| Provider | Selectable models | Effort levels | Enforcement |
-| --- | --- | --- | --- |
-| **Claude** | fable, sonnet, opus (generic aliases only) | low · medium · high · xhigh · max | `<model>-worker-<effort>` subagents |
-| **Codex** | gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, gpt-reserve | low · medium · high · xhigh · max | `<model>-<effort>` roles |
-| **Antigravity** | gemini-3.8 / 3.7 / 3.6-flash, gemini-3.1-pro, claude-sonnet-4-6, claude-opus-4-6-thinking, gpt-oss-120b | encoded in the model slug | advisory + `cli-bridge` |
+The `ultra` effort level is never offered, stripped from any answer and has no worker.
+
+### Parallel agents
 
 | Extra agents | When |
 | --- | --- |
 | **0** | default – the vast majority of requests |
 | **+1** | two clearly independent, substantial parts |
 | **+2** | three independent workstreams (e.g. backend + frontend + migration) |
-| **+3** | a complete new page / feature from scratch (backend + frontend + data layer) |
+| **+3** | a complete new page or feature from scratch (backend + frontend + data layer) |
 | **+4** | very rare – the same, plus custom tooling such as a scraper |
 
-**Overrides:** Claude `#fable #sonnet #opus #codex #antigravity` · Codex / Antigravity
-`#fast #main #deep` · `#norouter` / `#privat` = no routing, nothing sent to TypeSafe.
+Code-level clamps: one fewer when the answer is not confident, at most +1 unless the request is hard.
+
+### Queue protection
+
+All three tools already queue messages typed while the agent is busy. jev-router adds the missing
+context: the new prompt is told that earlier work in the same session is still running and must be
+finished first – never stopped, restarted or overwritten. If another session works in the same
+folder, the prompt is warned not to modify that session's files. State expires automatically, so a
+crashed session never blocks anything.
+
+### Shared skills
+
+`~/.skills` is the single skill folder. Claude Code and Codex see it through per-skill links
+(junctions on Windows, symlinks elsewhere); Antigravity through its `skills.json`. Skills that tools
+manage themselves (Claude desktop's synced skills, plugins, Codex built-ins) stay in place but are
+indexed too, so the router can hand a skill of one tool to another ("read and follow `<path>/SKILL.md`").
+
+### Overrides
+
+Claude `#fable #sonnet #opus #codex #antigravity` · Codex / Antigravity `#fast #main #deep` ·
+`#norouter` / `#privat`: no routing, nothing is sent to TypeSafe (queue protection still applies).
 
 ---
 
-## 🛠️ Technology Stack
+## 🎙️ Speech-to-Text
 
-* **Language:** [Python 3.14](https://www.python.org/) (standard library only – no runtime dependencies)
-* **Hosts:** [Claude Code](https://code.claude.com/), [OpenAI Codex](https://developers.openai.com/codex), [Google Antigravity](https://antigravity.google/)
-* **Protocol:** [Model Context Protocol](https://modelcontextprotocol.io/) (newline-delimited JSON-RPC over stdio)
-* **Decision Engine:** JEV / TypeSafe (`TYPESAFE_API_KEY`), local classifier as drop-in fallback
-* **Speech-to-Text:** [Handy](https://github.com/cjpais/Handy) with Whisper Large v3 (offline, GPU)
-* **Quality Gate:** [pytest](https://pytest.org/) unit suite + bilingual evaluation harness
+Dictate prompts into any app, in any language Whisper supports – offline and free.
+See **[docs/speech-to-text.md](docs/speech-to-text.md)** for installation, model choice by hardware
+and phone dictation.
+
+## 📱 Remote Access
+
+Control your computer from a phone or another device under one machine name, with every tool
+starting its remote service at logon. See **[docs/remote-access.md](docs/remote-access.md)**.
+
+---
+
+## ⚙️ Configuration
+
+| Setting | Where |
+| --- | --- |
+| JEV token | `python install.py --jev-token=<token>` or environment variable `TYPESAFE_API_KEY` |
+| Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `bin/` |
+| Model catalog, tiers, routing table | `router/models.json`, `router/targets.json`, `router/routes.json` |
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `ROUTER_BACKEND` | `auto` | `jev`, `local` or `auto` (JEV when a token exists) |
+| `ROUTER_MIN_CONFIDENCE` | `0.6` | below it the task falls back to the default tier |
+| `ROUTER_MAX_EXTRA_AGENTS` | `4` | hard cap for parallel agents |
+| `ROUTER_QUEUE_TTL_MIN` | `120` | minutes after which an unfinished queue entry is ignored |
+| `ROUTER_SKILL_CANDIDATES` | `8` | skills offered to JEV per request |
+| `ROUTER_LOG_PROMPTS` | unset | `1` = log full prompts (default: first 200 characters, secrets redacted) |
+| `TYPESAFE_API_URL`, `JEV_MODEL`, `JEV_TIMEOUT` | – | JEV endpoint, pinned model version, timeout in seconds |
 
 ---
 
@@ -105,85 +172,35 @@ The router only offers models verified to work on this machine's accounts (`rout
 
 | Path | Purpose |
 | --- | --- |
-| `router/core.py` | classification, decision, rendering, safety regex, JEV client + local model |
-| `router/run_hook.py` | hook entry point for all three tools |
-| `router/mcp_server.py` | MCP server (`route_prompt`, `list_skills`, `get_skill`) |
-| `router/skill_index.py` · `router/skills_hub.py` | skill catalog + pre-filter · hub migration, linking, agent generation |
-| `router/install_hooks.py` | installs hooks + MCP for every tool (dry run by default) |
-| `router/models.json` · `routes.json` · `targets.json` | verified models + policy · task → tier · tier → agent / model / effort |
-| `agents/` · `skills/` | worker templates · repo-owned skills (e.g. `cli-bridge`) |
-| `tests/` · `eval/` | unit tests · 100 HU + 100 EN labelled prompts |
-| `scripts/` | `setup-windows.ps1`, `check_tools.py` (health report), `check_models.py` (policy check) |
-
-Runtime state lives outside the repository in `~/.jev-router/` (space-free shims, logs, backups).
+| `install.py` | cross-platform installer (detect, log in, connect, skills, extras, uninstall) |
+| `router/core.py` | classification, decision, rendering, safety regex, JEV client + built-in classifier |
+| `router/run_hook.py` · `router/queue_state.py` | hook entry point for all tools · queue protection |
+| `router/mcp_server.py` | MCP server: `route_prompt`, `list_skills`, `get_skill` |
+| `router/skill_index.py` · `router/skills_hub.py` | skill catalog + pre-filter · shared folder, links, worker generation |
+| `router/install_hooks.py` · `router/platforms.py` · `router/remote.py` | hooks/MCP · OS abstraction · remote access |
+| `router/*.json` | model catalog and policy, routing table, tier targets |
+| `agents/` · `skills/` | worker templates · bundled skills (`cli-bridge`) |
+| `tests/` · `eval/` | unit tests · 100 Hungarian + 100 English labelled prompts |
+| `docs/` · `scripts/` | guides · health report and model-policy check |
 
 ---
 
-## 🚀 Setup
+## 🧪 Development
 
-```powershell
-python router/install_hooks.py --apply      # hooks + MCP for Claude, Codex, Antigravity (.bak backups)
-python router/skills_hub.py all --apply     # skill hub, links, generated agents, catalog
-python scripts/check_tools.py               # health report
+```bash
+python -m pytest tests -q          # unit tests
+python eval/eval_router.py         # full pipeline on the labelled prompts (exit 1 below target)
+python scripts/check_models.py     # every model / effort referenced is allowed and in the catalog
 ```
 
-Full machine setup incl. phone access and autostart:
-`powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -AutoStart`.
-JEV is enabled by setting the user environment variable `TYPESAFE_API_KEY` – no code change needed.
+Evaluation targets: task accuracy ≥ 85 % per language, destructive-request recall 100 %,
+false positives < 5 %, reply language 100 %. The test suite runs on Windows, macOS and Linux in CI.
 
-**One-time manual steps:** trust the Codex hook (`codex` → `/hooks`); pair the phone in the ChatGPT
-app (Settings → Connections → *Control this PC*); for Claude Chat/Cowork add to Settings → Profile →
-Personal preferences: *"Before answering any new request, call the jev-router route_prompt tool with
-my message and follow its instructions."*
+See [CHANGELOG.md](CHANGELOG.md) for the release history and [CLAUDE.md](CLAUDE.md) for contributor
+conventions.
 
 ---
 
-## 📱 Remote Access & Dictation
+## 📄 License
 
-The PC appears under the same name, **Razer Blade-16**, in every tool. It must be switched on,
-awake and logged in; all remote services start automatically at logon.
-
-| Tool | From the phone / another laptop |
-| --- | --- |
-| Claude | Claude app → Code, or claude.ai/code → *Razer Blade-16* |
-| Gemini (Antigravity) | antigravity.google.com → *Razer Blade-16* |
-| ChatGPT (Codex) | ChatGPT app, paired once with a QR code |
-
-**Hungarian dictation:** on the PC hold `Ctrl+Space` in any app (Handy, Whisper Large v3, language
-set to Hungarian); on the phone use the keyboard's microphone (Gboard / iOS) with Hungarian enabled.
-
----
-
-## 🧪 Testing & Debugging
-
-```powershell
-python -m pytest tests -q          # unit suite: language, safety regex, routing, hooks, MCP, policy
-python eval/eval_router.py         # full pipeline on 100 HU + 100 EN prompts (exit 1 below target)
-python scripts/check_models.py     # every model / effort named anywhere is allowed and available
-```
-
-Targets: task accuracy ≥ 85 % per language, destructive recall 100 %, false positives < 5 %,
-reply language 100 %.
-
-* Routing log: `~/.jev-router/logs/routing.jsonl` (full prompt text only with `ROUTER_LOG_PROMPTS=1`).
-* Manual run: `echo {"prompt":"Refaktoráld az auth modult"} | python router/run_hook.py claude UserPromptSubmit`
-* Skill search: `python router/skill_index.py "excel táblázat"` · hub health: `python router/skills_hub.py doctor`
-* Environment: `ROUTER_BACKEND`, `ROUTER_MIN_CONFIDENCE`, `ROUTER_MAX_EXTRA_AGENTS`, `ROUTER_SKILL_CANDIDATES`,
-  `TYPESAFE_API_URL`, `JEV_MODEL`, `JEV_TIMEOUT`, `JEV_ROUTER_HOME`, `JEV_SKILLS_HUB`.
-
----
-
-## ⚠️ Important Notice: Project Status
-
-This repository is published **for portfolio and demonstration purposes only**.
-
-**This is not an open-source project.** You are strictly prohibited from copying, distributing,
-modifying, or using this code for any academic, commercial, or personal projects. Please see the
-`LICENSE.md` file for a detailed breakdown of these restrictions.
-
----
-
-## 📦 Release Log
-
-Version history, verification results, platform findings and open items are maintained in
-[`CHANGELOG.md`](CHANGELOG.md).
+[MIT](LICENSE.md). Product names are trademarks of their respective owners.

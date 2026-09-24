@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source of truth: every model and reasoning-effort level the router (JEV, or the local mock) may choose, per provider - all verified live on 2026-09-24. 'models' with selectable=true are offered to JEV as the 'model' question; each model's 'levels' are what it really supports. policy.excluded_efforts is removed from EVERY provider in code (core.py), never offered to JEV and stripped from any answer. Agents/roles that enforce a (model, effort) pair are generated from this file by `python router/skills_hub.py agents --apply`.",
+  "_comment": "Generic catalog of every model and reasoning-effort level the router may choose, per provider. 'selectable' is the DEFAULT availability; what a given account can really use differs by plan, so `python install.py models --probe` tests it and writes per-user overrides to ~/.jev-router/models.local.json (never committed). policy.excluded_efforts is removed from EVERY provider in code. Agents/roles enforcing a (model, effort) pair are generated from this file.",
   "policy": {
     "excluded_efforts": [
       "ultra"
@@ -22,7 +22,7 @@
       "fable": "claude-fable-5-1",
       "haiku_excluded": "claude-haiku-4-5-20251001"
     },
-    "verified": "2026-09-24: `claude --help` (--effort low|medium|high|xhigh|max; --model aliases fable/opus/sonnet) + live `claude -p --model <fable|sonnet|opus> --effort <low|max>` runs, all OK. Claude Code 2.1.281.",
+    "verified": "2026-09-24, Claude Code 2.1.281: `claude --help` (--effort low|medium|high|xhigh|max; --model aliases fable/opus/sonnet) and live `claude -p --model <alias> --effort <level>` runs.",
     "models": [
       {
         "id": "fable",
@@ -63,7 +63,7 @@
     ]
   },
   "codex": {
-    "verified": "2026-09-24, LIVE per model with this ChatGPT account (`codex exec -m <model>`): WORKS gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna, gpt-reserve. REJECTED: gpt-6-astra, gpt-6-sol, gpt-5.6-sol ('not supported when using Codex with a ChatGPT account'), gpt-5.5 (404 no access). `codex debug models` shows the binary's full catalog, not what the account can use - never trust it alone.",
+    "verified": "2026-09-24, Codex CLI 0.156.1, live `codex exec -m <model>` per model on a ChatGPT-plan login: gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna and gpt-reserve work; gpt-6-astra, gpt-6-sol and gpt-5.6-sol are rejected for ChatGPT-plan logins; gpt-5.5 returned 404. Those are therefore not selectable by default - API-key logins or other plans may differ: run `python install.py models --probe`. Note: `codex debug models` lists the CLI's full catalog, not what an account may use.",
     "models": [
       {
         "id": "gpt-6-astra",
@@ -76,7 +76,7 @@
           "max",
           "ultra"
         ],
-        "description": "GPT-6-Astra - not supported with a ChatGPT account (verified)"
+        "description": "GPT-6-Astra - not available with ChatGPT-plan logins"
       },
       {
         "id": "gpt-6-sol",
@@ -89,7 +89,7 @@
           "max",
           "ultra"
         ],
-        "description": "GPT-6-Sol - not supported with a ChatGPT account (verified)"
+        "description": "GPT-6-Sol - not available with ChatGPT-plan logins"
       },
       {
         "id": "gpt-6-luna",
@@ -113,7 +113,7 @@
           "xhigh",
           "max"
         ],
-        "description": "GPT-Reserve - fast and affordable agentic coding model (hidden in the picker, but works with this account)"
+        "description": "GPT-Reserve - fast and affordable agentic coding model (hidden in the model picker)"
       },
       {
         "id": "gpt-5.6-sol",
@@ -126,7 +126,7 @@
           "max",
           "ultra"
         ],
-        "description": "GPT-5.6-Sol - not supported with a ChatGPT account (verified)"
+        "description": "GPT-5.6-Sol - not available with ChatGPT-plan logins"
       },
       {
         "id": "gpt-5.6-terra",
@@ -162,7 +162,7 @@
           "high",
           "xhigh"
         ],
-        "description": "GPT-5.5 - 404 - no access for this account (verified)"
+        "description": "GPT-5.5 - legacy; not available on the tested plan"
       },
       {
         "id": "gpt-5.4",
@@ -219,7 +219,7 @@
     "agents_note": "Roles: [agents.<name>] in ~/.codex/config.toml with description + config_file (role TOML: model, model_reasoning_effort, developer_instructions). Verified: Codex lists the generated roles as spawnable agent types."
   },
   "antigravity": {
-    "verified": "2026-09-24: `agy models` (CLI 1.2.9, logged in). The effort is part of the model slug (…-low/-medium/-high); models without a suffix have a single fixed setting.",
+    "verified": "2026-09-24: `agy models` (Antigravity CLI 1.2.x). The effort is part of the model slug (…-low/-medium/-high); models without a suffix have a single fixed setting.",
     "models": [
       {
         "id": "gemini-3.8-flash",
@@ -299,7 +299,7 @@
     },
     "skills": {
       "mechanism": "~/.gemini/config/skills.json 'entries' list, each path scanned one level deep.",
-      "path_rule": "VERIFIED 2026-09-23 (agy 1.2.9): entry paths must be ABSOLUTE ('~/.skills' is rejected at runtime despite the docs) - use C:/Users/<user>/.skills."
+      "path_rule": "Verified 2026-09-23 (agy 1.2.9): skills.json entry paths must be ABSOLUTE ('~/.skills' is rejected at runtime despite the docs), and directory links inside an entry are not followed."
     }
   }
 }

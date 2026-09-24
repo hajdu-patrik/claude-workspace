@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import core  # noqa: E402
+import queue_state  # noqa: E402
 
 LOG_FILE = core.STATE_DIR / "logs" / "routing.jsonl"
 SEEN_FILE = core.STATE_DIR / "state" / "antigravity_seen.json"
@@ -119,6 +120,21 @@ def emit(text, hook_event_name, provider):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": hook_event_name, "additionalContext": text}}))
 
 
+def _json_object(raw):
+    try:
+        payload = json.loads(raw.decode("utf-8-sig"))
+        return payload if isinstance(payload, dict) else {}
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        return {}
+
+
+def _session_id(payload):
+    """Claude/Codex: session_id; Antigravity: conversationId."""
+    if not payload:
+        return None
+    return payload.get("session_id") or payload.get("sessionId") or payload.get("conversationId")
+
+
 def should_skip(prompt):
     low = prompt.lstrip().lower()
     return (len(prompt) < 3 or low.startswith("/") or low.startswith(SYSTEM_PREFIXES)
@@ -137,20 +153,36 @@ def main(argv=None):
     provider, hook_event_name = args
 
     raw = sys.stdin.buffer.read()
+    if hook_event_name == "Stop":  # the agent finished its turn: release its queue entries
+        payload = _json_object(raw)
+        queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
+        if provider == "antigravity":
+            print("{}")  # Antigravity expects a JSON object; no "decision" means "allow the stop"
+        return 0
+
     prompt, payload, turn_key = extract_prompt(raw, provider)
     if prompt is None:
         if payload is None:
             log({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "error": "stdin: not a JSON object",
                  "stdin_head": redact(raw[:80].decode("utf-8", "replace"))})
         return 0
-    if should_skip(prompt):
-        return 0  # command, harness message, or private prompt (#norouter/#privat: never sent to TypeSafe)
+    low = prompt.lstrip().lower()
+    if len(prompt) < 3 or low.startswith("/") or low.startswith(SYSTEM_PREFIXES):
+        return 0  # a command or a harness message, not a user request
     if provider == "antigravity" and turn_key and not _first_time(turn_key):
         return 0  # same user turn, later model call
 
+    cwd = (payload.get("cwd") or (payload.get("workspacePaths") or [""])[0]) if payload else ""
+    private = any(t in low for t in SKIP_TAGS)
+    queue_text = queue_state.render(queue_state.on_submit(
+        core.STATE_DIR, provider, _session_id(payload), cwd, "" if private else redact(" ".join(prompt.split())[:60])))
+    if private:  # #norouter / #privat: no routing, never sent to TypeSafe - only the queue protection
+        if queue_text:
+            emit(queue_text, hook_event_name, provider)
+        return 0
+
     t0 = time.perf_counter()
-    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider,
-             "cwd": (payload.get("cwd") or (payload.get("workspacePaths") or [""])[0]) if payload else "",
+    entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "cwd": cwd,
              "sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
              "prompt": redact(prompt if os.environ.get("ROUTER_LOG_PROMPTS") == "1" else prompt[:200])}
     try:
@@ -169,8 +201,10 @@ def main(argv=None):
         return 0
     entry.update(d)
     entry["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+    if queue_text:
+        entry["queued"] = True
     log(entry)
-    emit(text, hook_event_name, provider)
+    emit(text + (" " + queue_text if queue_text else ""), hook_event_name, provider)
     return 0
 
 

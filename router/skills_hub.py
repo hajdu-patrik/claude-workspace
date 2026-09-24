@@ -10,15 +10,16 @@
 
 Without --apply every mutating command is a DRY RUN: it only prints what it would do.
 
-Layout (the hub is the single source of truth; everything else is a directory junction - no
+Layout (the hub is the single source of truth; everything else is a directory link - no
 admin rights or Developer Mode needed on Windows):
     ~/.skills/<name>/SKILL.md            real folder (moved here from ~/.claude/skills)
     ~/.skills/<repo skill>  -> <repo>/skills/<name>      (repo-owned skills stay version-controlled)
     ~/.claude/skills/<name> -> ~/.skills/<name>          Claude Code (CLI + desktop Code tab)
     ~/.agents/skills/<name> -> ~/.skills/<name>          Codex (CLI + ChatGPT app's Codex mode)
-    ~/.gemini/config/skills.json  entries: [{"path": "C:/Users/<you>/.skills"}]  Antigravity (absolute path!)
-Per-skill junctions rather than one junction for the whole folder: ~/.claude/skills also holds
-app-managed content (synced/) and a fully symlinked skills dir is a known Claude Code regression.
+    ~/.gemini/config/skills.json  entries: [<absolute ~/.skills>, <absolute repo/skills>]  Antigravity
+Links are junctions on Windows and symlinks on macOS/Linux, one per skill rather than one for the
+whole folder: ~/.claude/skills also holds app-managed content (synced/), and a fully linked skills
+directory is a known Claude Code regression.
 
 Safety: never deletes a real directory. Only junctions this tool can prove it owns (pointing into
 the hub or the repo's skills/) are ever removed/replaced; a name collision is reported, not resolved.
@@ -27,11 +28,11 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import platforms as P  # noqa: E402
 import skill_index  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -39,13 +40,14 @@ HOME = Path.home()
 HUB = skill_index.HUB
 REPO_SKILLS = REPO / "skills"
 AGENT_TEMPLATES = REPO / "agents"
-CLAUDE_SKILLS = HOME / ".claude" / "skills"
-CODEX_SKILLS = HOME / ".agents" / "skills"
+CLAUDE_SKILLS = P.PATHS["claude_skills"]
+CODEX_SKILLS = P.PATHS["codex_skills"]
 LEGACY_CODEX_SKILLS = HOME / ".codex" / "skills"
-AGY_SKILLS_JSON = HOME / ".gemini" / "config" / "skills.json"
-CLAUDE_AGENTS = HOME / ".claude" / "agents"
-CODEX_AGENTS = HOME / ".codex" / "agents"
-CODEX_CONFIG = HOME / ".codex" / "config.toml"
+AGY_SKILLS_JSON = P.PATHS["agy_skills_json"]
+CLAUDE_AGENTS = P.PATHS["claude_agents"]
+CODEX_AGENTS = P.PATHS["codex_agents"]
+CODEX_CONFIG = P.PATHS["codex_config"]
+PROVIDERS = ("claude", "codex", "antigravity")  # narrowed by the installer to what is installed
 APP_MANAGED = {"synced"}  # folders inside ~/.claude/skills owned by the desktop app
 GEN_MARK = "generated-by: jev-router"
 TOML_BEGIN, TOML_END = "# >>> jev-router agents (generated - edit router/targets.json, not this block)", "# <<< jev-router agents"
@@ -60,10 +62,7 @@ def act(msg, fn=None):
 
 
 def is_junction(p):
-    try:
-        return p.is_junction() or p.is_symlink()
-    except OSError:
-        return False
+    return P.is_link(p)
 
 
 def target_of(p):
@@ -74,14 +73,11 @@ def target_of(p):
 
 
 def mk_junction(link, target):
-    link.parent.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, text=True)
-    if r.returncode:
-        raise OSError((r.stderr or r.stdout).strip())
+    P.link_dir(link, target)  # junction on Windows, symlink on macOS/Linux
 
 
 def rm_junction(link):
-    os.rmdir(link)  # removes the link only, never the target's contents
+    P.unlink_dir(link)  # removes the link only, never the target's contents
 
 
 def owned(link):
@@ -113,13 +109,20 @@ def hub_skills():
 
 
 # --- commands -------------------------------------------------------------------------------------
+# User-installed skill folders of every tool; each real folder is moved into the hub and replaced by
+# a link, so the tool keeps working and every other tool gets the skill too. App-managed folders
+# (Claude desktop's synced/, Codex's .system/) stay where they are - the catalog indexes them.
+MIGRATE_SOURCES = [CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS, HOME / ".gemini" / "config" / "skills"]
+
+
 def cmd_migrate():
-    if not CLAUDE_SKILLS.is_dir():
+    moved = 0
+    candidates = [d for src in MIGRATE_SOURCES if src.is_dir() for d in sorted(src.iterdir())]
+    if not candidates:
         print("nothing to migrate")
         return
-    moved = 0
-    for d in sorted(CLAUDE_SKILLS.iterdir()):
-        if d.name in APP_MANAGED or is_junction(d) or not d.is_dir():
+    for d in candidates:
+        if d.name in APP_MANAGED or d.name.startswith(".") or is_junction(d) or not d.is_dir():
             continue
         if not (d / "SKILL.md").is_file():
             print(f"[SKIP] {d.name}: no SKILL.md")
@@ -148,8 +151,10 @@ def cmd_link():
         if s.name in names:
             continue
         names.add(s.name)
-        ensure_link(CLAUDE_SKILLS / s.name, s, "claude")
-        ensure_link(CODEX_SKILLS / s.name, s, "codex")
+        if "claude" in PROVIDERS:
+            ensure_link(CLAUDE_SKILLS / s.name, s, "claude")
+        if "codex" in PROVIDERS:
+            ensure_link(CODEX_SKILLS / s.name, s, "codex")
     # 3) drop stale links we own (target gone / skill removed from the hub), and legacy locations
     for base in (CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS, REPO / ".claude" / "skills"):
         if not base.is_dir():
@@ -161,6 +166,8 @@ def cmd_link():
     repo_agents = REPO / ".claude" / "agents"
     if is_junction(repo_agents):
         act(f"remove legacy project agents link {repo_agents} (agents are now user-level)", lambda: rm_junction(repo_agents))
+    if "antigravity" not in PROVIDERS:
+        return
     # 4) Antigravity: one manifest entry for the whole hub. Must be an ABSOLUTE path: agy 1.2.9
     #    rejects "~/.skills" at runtime ("must be an absolute path"), despite its docs.
     cfg = {}
@@ -217,7 +224,7 @@ def planned_agents():
         out.append((provider, name, model, effort,
                     f"{desc} Fixed model {model}, reasoning effort {effort}. Use when the [router] context names {name}.", body))
 
-    for provider in ("claude", "codex"):
+    for provider in (p for p in ("claude", "codex") if p in PROVIDERS):
         cfg = targets.get(provider, {})
         generic = cfg.get("agent_template")
         for model, mdef in core.models_for(provider).items():
@@ -242,10 +249,12 @@ def cmd_agents():
         if not path.exists() or path.read_text(encoding="utf-8") != content:
             act(f"write {path}", lambda p=path, c=content: (p.parent.mkdir(parents=True, exist_ok=True),
                                                              p.write_text(c, encoding="utf-8")))
-    for f in CLAUDE_AGENTS.glob("*.md") if CLAUDE_AGENTS.is_dir() else []:
+    for f in CLAUDE_AGENTS.glob("*.md") if CLAUDE_AGENTS.is_dir() and "claude" in PROVIDERS else []:
         if f.stem not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
             act(f"remove stale generated agent {f}", f.unlink)
     # Codex: role file per variant + one managed block in config.toml
+    if "codex" not in PROVIDERS:
+        return
     block = [TOML_BEGIN]
     want = set()
     for provider, name, model, effort, desc, body in plan:
