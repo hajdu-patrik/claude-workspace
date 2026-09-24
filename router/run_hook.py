@@ -154,7 +154,9 @@ def main(argv=None):
              "sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
              "prompt": redact(prompt if os.environ.get("ROUTER_LOG_PROMPTS") == "1" else prompt[:200])}
     try:
-        d, text, _, error = core.route(prompt, provider)
+        # Codex reports the session's active model in the hook payload: lets a tier stay in-session
+        session_model = payload.get("model") if provider == "codex" and isinstance(payload.get("model"), str) else None
+        d, text, _, error = core.route(prompt, provider, session_model=session_model)
         if error:
             entry["error"] = error
     except Exception as exc:  # e.g. a malformed routes.json: never block

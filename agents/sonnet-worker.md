@@ -1,5 +1,5 @@
 ---
-name: main-worker
+name: sonnet-worker
 description: Balanced general-purpose worker for everyday coding, writing, and analysis tasks.
 model: sonnet
 ---

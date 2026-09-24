@@ -188,21 +188,34 @@ def safe_key(name):
     return "skill_" + re.sub(r"[^a-z0-9_]", "_", name.lower())
 
 
+def excluded_efforts():
+    """Levels no provider may ever get (policy.excluded_efforts, default 'ultra')."""
+    return set(load_json("models.json", {}).get("policy", {}).get("excluded_efforts", ["ultra"]))
+
+
+def models_for(provider):
+    """{id: model_dict} of the models JEV may choose for this provider (selectable=true), each
+    with 'levels' already stripped of the excluded efforts."""
+    cfg = load_json("models.json", {})
+    m = cfg.get(provider) or cfg.get(base_provider(provider)) or {}
+    banned = excluded_efforts()
+    out = {}
+    for model in m.get("models", []):
+        if model.get("selectable"):
+            out[model["id"]] = dict(model, levels=[l for l in model.get("levels", []) if l not in banned])
+    return out
+
+
 def effort_levels_for(provider):
-    """{"levels": [...], "excluded": [...], "note": ...} - the provider's reasoning-effort
-    vocabulary from models.json, or None if nothing is recorded (then no effort question)."""
-    models = load_json("models.json", {})
-    m = models.get(provider) or models.get(base_provider(provider))
-    if not m:
-        return None
-    ef = m.get("effort_levels") or {}
-    levels = ef.get("levels")
-    if not levels and m.get("available_models"):  # codex: union of every model's own levels
-        levels = sorted({l for model in m["available_models"] for l in model.get("levels", [])},
-                        key=lambda l: EFFORT_ORDER.index(l) if l in EFFORT_ORDER else 99)
+    """{"levels": [...], "excluded": [...]} - union of every selectable model's levels, minus the
+    excluded ones, in EFFORT_ORDER. None if the provider has no models recorded."""
+    models = models_for(provider)
+    levels = sorted({l for m in models.values() for l in m["levels"]},
+                    key=lambda l: EFFORT_ORDER.index(l) if l in EFFORT_ORDER else 99)
     if not levels:
         return None
-    return {"levels": levels, "excluded": ef.get("excluded", []), "note": ef.get("note", "")}
+    return {"levels": levels, "excluded": sorted(excluded_efforts()),
+            "note": "The chosen level is clamped to what the chosen model supports."}
 
 
 def clamp_effort(effort, allowed):
@@ -219,8 +232,10 @@ def clamp_effort(effort, allowed):
 
 
 # --- JEV ---------------------------------------------------------------------------------------
-def build_questions(skills, effort=None):
-    """skills: {name: description} - only the pre-filtered candidates, never the whole catalog."""
+def build_questions(skills, effort=None, models=None):
+    """skills: {name: description} - only the pre-filtered candidates, never the whole catalog.
+    models: {id: model_dict} from models_for() - every selectable model becomes a criterion of the
+    'model' question, with the effort levels it supports."""
     q = {
         "task": {"type": "choice", "instructions": "What kind of request is this? The text may be in Hungarian or English.",
                  "criteria": TASKS},
@@ -245,6 +260,11 @@ def build_questions(skills, effort=None):
             instructions += " " + effort["note"]
         q["effort"] = {"type": "choice", "instructions": instructions,
                        "criteria": {l: f"Use the '{l}' reasoning-effort level for this request." for l in usable}}
+    if models and len(models) > 1:
+        q["model"] = {"type": "choice",
+                      "instructions": "Which model of this provider fits this request best (capability vs. cost and speed)?",
+                      "criteria": {mid: m.get("description", mid) + (f" (effort levels: {', '.join(m['levels'])})" if m["levels"] else "")
+                                   for mid, m in models.items()}}
     return q
 
 
@@ -265,7 +285,7 @@ def use_jev(backend=None):
     return BACKEND == "jev" or (BACKEND == "auto" and bool(os.environ.get("TYPESAFE_API_KEY")))
 
 
-def classify(prompt, skills=None, backend=None, effort=None):
+def classify(prompt, skills=None, backend=None, effort=None, models=None):
     """(prompt) -> JEV-shaped answers dict. The single function that changes behaviour once real
     JEV access exists: decide() and its callers stay the same.
 
@@ -275,7 +295,7 @@ def classify(prompt, skills=None, backend=None, effort=None):
     never trusting the model-based answer alone for a hard constraint."""
     candidates = skills or []
     if use_jev(backend):
-        result = ask_jev(prompt, build_questions({s["name"]: s["description"][:300] for _, s in candidates}, effort))
+        result = ask_jev(prompt, build_questions({s["name"]: s["description"][:300] for _, s in candidates}, effort, models))
         answers = result["answers"]
         answers["_backend"] = "jev"
         answers["_jev_model"] = result.get("model")
@@ -295,10 +315,14 @@ def classify(prompt, skills=None, backend=None, effort=None):
                 idx = round(lvl / 2 * (len(usable) - 1) * 0.8) if len(usable) > 1 else 0
                 answers["effort"] = {"choice": usable[max(0, min(idx, len(usable) - 1))], "confidence": 0.5}
 
-    if effort and effort.get("excluded") and answers.get("effort", {}).get("choice") in set(effort["excluded"]):
-        usable = [l for l in effort["levels"] if l not in set(effort["excluded"])]
-        if usable:
-            answers["effort"] = {"choice": usable[-1], "confidence": answers["effort"].get("confidence", 0.5)}
+    # Hard policy, never trusting the model-based answer alone: an excluded level ('ultra') becomes
+    # the highest allowed one, and a model JEV invented (or one not selectable) is dropped.
+    banned = excluded_efforts()
+    if answers.get("effort", {}).get("choice") in banned:
+        usable = [l for l in (effort or {}).get("levels", EFFORT_ORDER) if l not in banned]
+        answers["effort"] = {"choice": usable[-1] if usable else "max", "confidence": answers["effort"].get("confidence", 0.5)}
+    if "model" in answers and (not models or answers["model"].get("choice") not in models):
+        answers.pop("model")
     return answers
 
 
@@ -355,35 +379,51 @@ def decide(answers, routes, skills_by_name=None):
         result["skill_native"] = skills_by_name[skill]["native_in"]
     if "effort" in answers:
         result["effort"] = answers["effort"].get("choice")
+    m = answers.get("model")
+    if m and float(m.get("confidence", 0)) >= MIN_CONF:
+        result["model"] = m["choice"]  # JEV's explicit model pick (validated in classify)
     return result
 
 
-def resolve_tier(d, targets):
-    """(text, effort) for the decided tier. A tier in targets.json is either plain text, or
-    {"text": ..., "agent": ..., "model": ..., "efforts": [...]}: the effort is clamped to what
-    that tier's model supports and {agent}/{model}/{effort} placeholders are filled in."""
+def resolve_tier(d, targets, models=None, session_model=None):
+    """(text, effort, model) for the decided tier.
+
+    A tier in targets.json is plain text (answer in-session), or a spec
+    {"model", "efforts", "agent", "text", "same_model_text", "slug"}. When JEV picked a model
+    (d["model"]) and the tier is listed in targets["model_pick_tiers"], targets["model_pick"] is
+    used with that model instead. Effort: clamped to the model's real levels (models.json); the
+    local mock is additionally kept inside the tier's own 'efforts' range. Placeholders in
+    agent/text: {model}, {model_} (dots -> '_', TOML-safe role names), {effort}, {slug}, {agent}."""
     tiers = targets.get("tiers", {})
     spec = tiers.get(d["primary"]) or tiers.get("main") or "Answer directly in this session."
+    chosen = d.get("model")
+    if chosen and targets.get("model_pick") and d["primary"] in targets.get("model_pick_tiers", []):
+        spec = dict(targets["model_pick"], model=chosen)
     if isinstance(spec, str):
-        return spec, d.get("effort")
-    effort = clamp_effort(d.get("effort"), spec.get("efforts", []))
-    agent = spec.get("agent", "")
-    if agent and effort and spec.get("efforts"):
-        agent = f"{agent}-{effort}"
+        return spec, d.get("effort"), None
     model = spec.get("model", "")
-    if "{effort}" in model:
-        model = model.replace("{effort}", effort or "")
-    text = spec.get("text", "").format(agent=agent, model=model, effort=effort or "default")
-    return text, effort
+    mdef = (models or {}).get(model)
+    effort = d.get("effort")
+    if spec.get("efforts") and not (chosen and d.get("backend") == "jev"):
+        effort = clamp_effort(effort, spec["efforts"])
+    if mdef is not None:
+        effort = clamp_effort(effort, mdef["levels"]) if mdef["levels"] else None
+    slug = ((mdef or {}).get("slug") or spec.get("slug") or "{id}").format(id=model, effort=effort or "")
+    fields = {"model": model, "model_": model.replace(".", "_"), "effort": effort or "default", "slug": slug}
+    fields["agent"] = spec.get("agent", "").format(**fields)
+    template = spec.get("same_model_text") if session_model and session_model == model and spec.get("same_model_text") else spec.get("text", "")
+    return template.format(**fields), effort, model
 
 
-def render(d, destructive_hit, targets, provider="claude", lang_code="hu"):
+def render(d, destructive_hit, targets, provider="claude", lang_code="hu", models=None, session_model=None):
     """The instruction text injected in front of the model's turn."""
-    text, effort = resolve_tier(d, targets)
+    text, effort, model = resolve_tier(d, targets, models, session_model)
     d["effort"] = effort
+    if model:
+        d["target_model"] = model
     parts = [f"[router] backend={d.get('backend', 'override')} task={d['task']} difficulty={d['level']} "
              f"conf={d['task_conf']} lang={lang_code}.", text]
-    if effort and "{effort}" not in json.dumps(targets.get("tiers", {}).get(d["primary"], "")):
+    if effort and effort not in text:
         parts.append(f"Reasoning effort: {effort}.")
     if d.get("verify") in targets.get("verify", {}):
         parts.append(targets["verify"][d["verify"]])
@@ -401,13 +441,15 @@ def render(d, destructive_hit, targets, provider="claude", lang_code="hu"):
     return " ".join(p for p in parts if p)
 
 
-def route(prompt, provider, backend=None):
-    """Full pipeline used by both the hook and the MCP server.
+def route(prompt, provider, backend=None, session_model=None):
+    """Full pipeline used by both the hook and the MCP server. session_model: the model the calling
+    session already runs (Codex's hook payload reports it) - lets a tier say "stay in-session".
     Returns (decision_dict, rendered_text, destructive_hit, error_or_None)."""
     routes_all, targets_all = load_json("routes.json", {}), load_json("targets.json", {})
     routes = routes_all.get(provider) or routes_all.get(base_provider(provider)) or {"default": "main", "table": {}}
     targets = targets_all.get(provider) or targets_all.get(base_provider(provider)) or {"tiers": {"main": "Answer directly in this session."}}
     effort = effort_levels_for(provider)
+    models = models_for(provider)
     lang_code = lang.detect(prompt)
     regex_hit = is_destructive(prompt)
 
@@ -416,17 +458,17 @@ def route(prompt, provider, backend=None):
         primary, _ = apply_cloud(forced, "", routes)
         d = {"task": "override", "task_conf": 1.0, "level": 1, "primary": primary, "verify": "", "skill": None,
              "destructive_p": None, "notes": ["manual override"], "backend": "override", "lang": lang_code}
-        return d, render(d, regex_hit, targets, provider, lang_code), regex_hit, None
+        return d, render(d, regex_hit, targets, provider, lang_code, models, session_model), regex_hit, None
 
     catalog = skill_index.load_catalog()
     candidates = skill_index.prefilter(prompt, catalog, SKILL_CANDIDATES)
     by_name = {s["name"]: s for _, s in candidates}
     error = None
     try:
-        answers = classify(prompt, candidates, backend=backend, effort=effort)
+        answers = classify(prompt, candidates, backend=backend, effort=effort, models=models)
     except Exception as exc:  # network, timeout, 429, malformed JEV response: fall back to the mock
         error = f"{type(exc).__name__}: {exc}"[:200]
-        answers = classify(prompt, candidates, backend="local", effort=effort)
+        answers = classify(prompt, candidates, backend="local", effort=effort, models=models)
     d = decide(answers, routes, by_name)
     d["backend"] = answers.get("_backend", "local")
     d["lang"] = lang_code
@@ -434,7 +476,7 @@ def route(prompt, provider, backend=None):
     if answers.get("_jev_model"):
         d["jev_model"] = answers["_jev_model"]
     hit = regex_hit or (d["destructive_p"] is not None and d["destructive_p"] >= DESTRUCTIVE_T)
-    return d, render(d, hit, targets, provider, lang_code), hit, error
+    return d, render(d, hit, targets, provider, lang_code, models, session_model), hit, error
 
 
 def override_for(prompt, targets):

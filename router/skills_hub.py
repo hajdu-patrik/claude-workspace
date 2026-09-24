@@ -173,7 +173,10 @@ def cmd_link():
     entries = cfg.get("entries", [])
     repo_path = str(REPO_SKILLS).replace("\\", "/")
     hub_path = str(HUB).replace("\\", "/")
-    new_entries = [e for e in entries if e.get("path") not in (repo_path, "~/.skills", hub_path)] + [{"path": hub_path}]
+    # The repo's skills/ is listed too: agy does not follow directory junctions inside an entry
+    # (verified 2026-09-24: the junctioned ~/.skills/cli-bridge was not loaded, real folders were).
+    new_entries = ([e for e in entries if e.get("path") not in (repo_path, "~/.skills", hub_path)]
+                   + [{"path": hub_path}, {"path": repo_path}])
     if new_entries != entries:
         cfg["entries"] = new_entries
         act(f"{AGY_SKILLS_JSON}: entries -> {new_entries}",
@@ -188,20 +191,42 @@ def _split_template(path):
 
 
 def planned_agents():
-    """[(provider, name, model, effort, description, body)] from targets.json tiers with agent+efforts."""
+    """[(provider, name, model, effort, description, body)].
+
+    1) Every selectable model x every allowed effort level (models.json, 'ultra' already removed
+       by core.models_for) under the provider's agent_template - so whatever model + effort JEV
+       picks, a matching fixed agent/role exists.
+    2) Tier-specific agents whose template isn't the provider's generic one (e.g. test-worker-*),
+       for that tier's own effort range.
+    Body/description come from agents/<name>.md (Claude: <model>-worker.md, Codex: codex-worker.md)."""
+    import core  # local import: core pulls in lang + skill_index, only needed here
     targets = json.loads((REPO / "router" / "targets.json").read_text(encoding="utf-8"))
-    out = []
+    out, seen = [], set()
+
+    def template(name):
+        tpl = AGENT_TEMPLATES / f"{name}.md"
+        return _split_template(tpl) if tpl.exists() else ({}, "Do the delegated task carefully.")
+
+    def add(provider, agent_tpl, model, effort, tpl_name):
+        name = agent_tpl.format(model=model, model_=model.replace(".", "_"), effort=effort)
+        if (provider, name) in seen:
+            return
+        seen.add((provider, name))
+        fm, body = template(tpl_name)
+        desc = (fm.get("description") or f"{model} worker").rstrip(".")
+        out.append((provider, name, model, effort,
+                    f"{desc} Fixed model {model}, reasoning effort {effort}. Use when the [router] context names {name}.", body))
+
     for provider in ("claude", "codex"):
-        for tier, spec in targets.get(provider, {}).get("tiers", {}).items():
-            if not isinstance(spec, dict) or not spec.get("agent") or not spec.get("efforts"):
-                continue
-            tpl = AGENT_TEMPLATES / f"{spec['agent']}.md"
-            fm, body = _split_template(tpl) if tpl.exists() else ({}, "Do the delegated task carefully.")
-            for effort in spec["efforts"]:
-                desc = (fm.get("description") or f"{tier} worker").rstrip(".")
-                out.append((provider, f"{spec['agent']}-{effort}", spec["model"], effort,
-                            f"{desc} Fixed model {spec['model']}, reasoning effort {effort}. "
-                            f"Use when the [router] context names {spec['agent']}-{effort}.", body))
+        cfg = targets.get(provider, {})
+        generic = cfg.get("agent_template")
+        for model, mdef in core.models_for(provider).items():
+            for effort in mdef["levels"]:
+                add(provider, generic, model, effort, f"{model}-worker" if provider == "claude" else "codex-worker")
+        for spec in cfg.get("tiers", {}).values():
+            if isinstance(spec, dict) and spec.get("agent") and spec["agent"] != generic:
+                for effort in spec.get("efforts", []):
+                    add(provider, spec["agent"], spec["model"], effort, spec["agent"].split("-{")[0])
     return out
 
 

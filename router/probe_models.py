@@ -15,16 +15,24 @@ HOME = Path.home()
 
 
 def probe_codex():
-    print("=== Codex CLI ===")
-    cache = HOME / ".codex" / "models_cache.json"
-    if not cache.exists():
-        print("No ~/.codex/models_cache.json found - run `codex` interactively once to populate it.")
+    """Live catalog via `codex debug models`. ~/.codex/models_cache.json is NOT reliable: the
+    ChatGPT app's bundled (older) client rewrites it with a partial list (verified 2026-09-24)."""
+    print("=== Codex CLI (codex debug models) ===")
+    exe = shutil.which("codex")
+    if not exe:
+        print("codex not found on PATH.")
         return
-    d = json.loads(cache.read_text(encoding="utf-8"))
-    print(f"Fetched at: {d.get('fetched_at')} (client {d.get('client_version')})")
+    r = subprocess.run([exe, "debug", "models"], capture_output=True, text=True, timeout=60,
+                       encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+    out = r.stdout
+    try:
+        d = json.JSONDecoder().raw_decode(out[out.index('{"models"'):])[0]
+    except ValueError:
+        print("Could not parse `codex debug models` output:", (out or r.stderr)[:300])
+        return
     for m in d.get("models", []):
         levels = ", ".join(l["effort"] for l in m.get("supported_reasoning_levels", []))
-        print(f"  {m['slug']:20s} {m['display_name']:20s} [{levels}] - {m['description']}")
+        print(f"  {m['slug']:26s} vis={m.get('visibility', '?'):5s} [{levels}] - {m.get('description', '')}")
 
 
 def probe_antigravity():

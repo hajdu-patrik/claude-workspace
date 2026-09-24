@@ -3,8 +3,9 @@
 One router for **Claude Code, Codex and Antigravity**. It runs before every prompt, in every
 project, and decides three things per request:
 
-1. **model tier + reasoning effort** – enforced by delegating to a generated worker agent that has a
-   fixed model and effort (no hook in any of the three tools can switch the running model itself),
+1. **model + reasoning effort** – JEV chooses from EVERY selectable model of the provider and every
+   effort level that model supports (`ultra` is never possible), enforced by delegating to a generated
+   worker agent with that fixed model and effort (no hook can switch the running model itself),
 2. **skill** – picked from one shared catalog of every skill on the machine, including skills that
    belong to a *different* tool,
 3. **safety + language** – a SAFETY line before irreversible actions, and a reply in the prompt's
@@ -22,15 +23,15 @@ code change (JEV errors/timeouts fall back to the mock automatically).
                                  ├─ classify()               JEV (TYPESAFE_API_KEY) or local mock
                                  ├─ decide()                 routes.json: task × difficulty → tier
                                  └─ render()                 targets.json: tier → agent/model/effort text
- ─► "[router] … Delegate to `deep-worker-xhigh` (opus, effort xhigh) … Respond in Hungarian."
+ ─► "[router] … Delegate to `opus-worker-xhigh` (opus, effort xhigh) … Respond in Hungarian."
 ```
 
 ## Where it runs
 
 | Surface | Mechanism | Status (verified 2026-09-23) |
 |---|---|---|
-| Claude Code CLI + desktop **Code** tab (+ Remote Control from the phone) | `UserPromptSubmit` hook, `~/.claude/settings.json` | ✅ live; delegates to `fast/main/test/deep-worker-<effort>` |
-| Codex CLI + ChatGPT app **Codex** mode | `UserPromptSubmit` hook, `~/.codex/hooks.json` | ✅ live, **after** you trust it once (`codex` → `/hooks`); roles `deep-worker-<effort>` |
+| Claude Code CLI + desktop **Code** tab (+ Remote Control from the phone) | `UserPromptSubmit` hook, `~/.claude/settings.json` | ✅ live; delegates to `<fable|sonnet|opus>-worker-<effort>` / `test-worker-<effort>` |
+| Codex CLI + ChatGPT app **Codex** mode | `UserPromptSubmit` hook, `~/.codex/hooks.json` | ✅ live, **after** you trust it once (`codex` → `/hooks`); 34 roles `<model>-<effort>`, stays in-session when the session already runs the chosen model |
 | Antigravity CLI + app | `PreInvocation` hook, `~/.gemini/config/hooks.json` (prompt read from the transcript, injected once per turn) | ✅ live |
 | Claude desktop **Chat / Cowork** | MCP tool `route_prompt` (no hooks exist there) | ✅ server registered; the model calls it because of the Personal-preferences line below |
 | Codex / Antigravity (extra) | same MCP server | ✅ registered |
@@ -49,7 +50,7 @@ code change (JEV errors/timeouts fall back to the mock automatically).
 | `router/install_hooks.py` | installs hooks + MCP for all tools (dry run by default, `--apply`) |
 | `router/skills_hub.py` | skill hub: `migrate`, `link`, `agents`, `catalog`, `doctor`, `all` (dry run by default) |
 | `router/routes.json` / `targets.json` / `models.json` | task×difficulty → tier; tier → agent/model/effort; verified model lists + policy |
-| `agents/*.md` | worker templates → generated `~/.claude/agents/<tier>-worker-<effort>.md` and Codex roles |
+| `agents/*.md` | worker templates → generated `~/.claude/agents/<model>-worker-<effort>.md` and Codex roles |
 | `skills/` | repo-owned skills (exposed through `~/.skills`) – e.g. `cli-bridge` |
 | `tests/`, `eval/` | unit tests; 100 Hungarian + 100 English labelled prompts |
 | `scripts/` | `setup-windows.ps1`, `check_tools.py` (health report), `check_models.py` (model policy) |
@@ -72,13 +73,13 @@ spaces (`E:/Coding Projects/...`). All hooks call `python C:/Users/<you>/.jev-ro
 ## Shared skills (`~/.skills`)
 
 `~/.skills` is the single source of truth (148 skills migrated from `~/.claude/skills`, plus
-junctions to repo-owned skills). Each tool sees it natively:
+junctions to repo-owned skills). Each tool sees it natively (verified live: Claude, Codex and Antigravity all list hub skills):
 
 | Tool | How |
 |---|---|
 | Claude Code | per-skill junctions `~/.claude/skills/<name>` → hub (`synced/` stays app-managed) |
 | Codex | per-skill junctions `~/.agents/skills/<name>` → hub |
-| Antigravity | `~/.gemini/config/skills.json` → `{"path": "C:/Users/<you>/.skills"}` (**absolute** – agy rejects `~/`) |
+| Antigravity | `~/.gemini/config/skills.json` → `C:/Users/<you>/.skills` + the repo's `skills/` (**absolute** paths – agy rejects `~/`, and it does not follow junctions) |
 
 Add a skill: put `<name>/SKILL.md` into `~/.skills` (or `skills/` in this repo), then
 `python router/skills_hub.py all --apply`.
@@ -94,15 +95,21 @@ Known cosmetic limitation: the Claude desktop app's `/` menu doesn't list juncti
 
 ## Models and effort
 
-| Provider | Tiers (targets.json) | How it's enforced |
-|---|---|---|
-| Claude | `main` (in-session) · `fast` fable low–high · `sonnet` · `test` sonnet medium–xhigh · `deep` opus high–max · `cli:codex` · `cli:antigravity` | generated subagents with `model:` + `effort:` frontmatter |
-| Codex | `main` · `fast` · `deep` gpt-5.6-terra high–ultra | `[agents.deep-worker-<effort>]` roles in `~/.codex/config.toml` |
-| Antigravity | `main`/`fast` gemini-3.8-flash-{low,medium,high} · `deep` gemini-3.1-pro-high | advisory (no fixed-model agents in agy); enforced via cli-bridge `agy --model` |
+All lists were fetched live on 2026-09-24 (`claude --help` + live runs, `codex debug models`, `agy models`)
+and live in `router/models.json`. **`ultra` is excluded for every provider** (`policy.excluded_efforts`):
+never offered to JEV, stripped from any answer in code, and no agent/role exists for it.
 
-The decided effort is always clamped into what the tier's model supports (e.g. never `ultra` for
-Claude). Policy: Claude only via generic aliases (fable/sonnet/opus), never Haiku, never a dated
-ID – `python scripts/check_models.py` checks templates, settings and targets.
+| Provider | Selectable models (JEV's `model` question) | Effort levels | Enforcement |
+|---|---|---|---|
+| Claude | fable, sonnet, opus (generic aliases; never haiku) | low, medium, high, xhigh, max | 15 agents `<model>-worker-<effort>` + `test-worker-<medium/high/xhigh>` |
+| Codex | gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5 (hidden: gpt-5.4, daybreak-*, codex-auto-review – not selectable) | low…max per model (gpt-5.5 up to xhigh) | 34 roles `<model>-<effort>` (dots → `_`) in `~/.codex/config.toml` |
+| Antigravity | gemini-3.8/3.7/3.6-flash (low/medium/high), gemini-3.1-pro (low/high), claude-sonnet-4-6, claude-opus-4-6-thinking, gpt-oss-120b (medium) | baked into the slug | advisory (no fixed-model agents in agy); cli-bridge `agy --model <slug>` |
+
+Tier defaults (used by the mock, or when JEV doesn't pick a model): Claude `fast`=fable, `sonnet`,
+`test`=sonnet, `deep`=opus, `main`=in-session; Codex `fast`=gpt-6-luna, `main`=gpt-6-sol,
+`deep`=gpt-6-astra; Antigravity `fast`/`main`=gemini-3.8-flash, `deep`=gemini-3.1-pro-high.
+The effort is always clamped to what the chosen model really supports.
+Policy check: `python scripts/check_models.py`.
 
 Overrides: Claude `#fable #sonnet #opus #codex #antigravity`; Codex/Antigravity `#fast #main #deep`;
 `#norouter` / `#privat` = no routing, nothing sent to TypeSafe.
@@ -110,25 +117,31 @@ Overrides: Claude `#fable #sonnet #opus #codex #antigravity`; Codex/Antigravity 
 ## Testing
 
 ```powershell
-python -m pytest tests -q          # 68 unit tests: language, safety regex (hits + false positives), classifier,
+python -m pytest tests -q          # 70 unit tests: language, safety regex (hits + false positives), classifier,
                                    # effort clamp, per-provider routing, hook I/O for all 3 tools, MCP protocol
 python eval/eval_router.py         # full pipeline on 100 HU + 100 EN prompts, exit 1 if a target is missed
 ```
 Latest (local mock): task accuracy HU 91% / EN 90% (target ≥ 85%), destructive recall 100%,
 false positives 0%, reply-language 100%. Live end-to-end runs (2026-09-23) from a foreign folder:
-Claude CLI (hu+en, delegation to `fast-worker-low` observed), Codex CLI (hook + 4 roles visible),
+Claude CLI (hu+en, delegation to a fable worker observed), Codex CLI (hook + generated roles visible),
 Antigravity CLI (transcript parse, hu reply, cross-tool skill), cli-bridge both ways, MCP via a real client.
 
-## Phone access (PC must be on and awake)
+## Phone / other-laptop access (PC must be on and awake)
 
-* **Claude (primary)** – Remote Control. `start-rc.cmd` runs `claude remote-control --name "Otthoni gep"`
-  in a loop; `setup-windows.ps1 -AutoStart` registers it as the `ClaudeRemoteControl` logon task,
-  `-KeepAwake` disables sleep on AC and makes closing the lid do nothing. On the phone: Claude app →
-  Code → "Otthoni gep". The router hook runs there too (same `~/.claude/settings.json`).
-* **Codex** – ChatGPT desktop app → Settings → Connections → *Control this PC*, scan the QR code
-  with the ChatGPT mobile app (alternative: `codex remote-control start` + `codex remote-control pair`).
-* **Antigravity** – `agy remote-control start` (background daemon, `agy remote-control status`);
-  open it from any phone browser / install as a web app.
+Everything starts automatically at logon:
+
+| Tool | What runs | From the phone / another laptop |
+|---|---|---|
+| **Claude** | `ClaudeRemoteControl` logon task → `start-rc.cmd` → `claude remote-control --name "Razer Blade-16"` (restarts itself); the Claude desktop app also starts at logon, and every new Code session connects to Remote Control automatically | Claude app → Code, or claude.ai/code in any browser → **Razer Blade-16** (a new session on this PC) or an existing session such as "Razer Blade-16 – JEV router…" |
+| **Antigravity** | `agy remote-control` daemon (HKCU Run key `AntigravityCliDaemon`), instance `razer-blade-16-rising-photon` | https://antigravity.google.com (browser / installable web app) |
+| **Codex** | `ChatGPTAutostart` logon task opens the ChatGPT desktop app, which hosts the remote connection | one-time: ChatGPT app → Settings → Connections → *Control this PC* → scan the QR code with the ChatGPT mobile app |
+
+Why not `codex remote-control start`: it must detach a daemon, and on this Windows build every
+process (Explorer included) runs inside a Job Object without breakaway – it fails from any launcher
+(verified: shell, Task Scheduler, WMI, Explorer). The ChatGPT app is the working host.
+
+Naming: cloud sessions (claude.ai/code → environment, e.g. "Claude GitHub Session") vs. this PC
+("Razer Blade-16") – rename the cloud environment in claude.ai/code → environment settings.
 
 ## Hungarian speech-to-text (free)
 

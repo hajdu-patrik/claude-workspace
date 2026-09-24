@@ -1,5 +1,5 @@
 ---
-name: deep-worker
+name: opus-worker
 description: Strong worker for hard reasoning, proofs, architecture decisions, and large refactors.
 model: opus
 ---

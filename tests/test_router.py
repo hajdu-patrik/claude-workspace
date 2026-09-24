@@ -112,15 +112,51 @@ def test_claude_never_ultra():
 def test_route_claude_hard_code_goes_to_deep_worker_with_verify():
     d, text, hit, err = core.route("Refaktoráld az egész kódbázist hexagonális architektúrára", "claude")
     assert d["primary"] == "deep" and d["verify"] == "codex"
-    assert "`deep-worker-xhigh`" in text and "cli-bridge" in text and "Respond in Hungarian." in text
+    assert "`opus-worker-xhigh`" in text and "cli-bridge" in text and "Respond in Hungarian." in text
     assert not hit and err is None
 
 
 def test_route_codex_effort_always_valid_for_model():
     d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex")
-    assert d["primary"] == "deep" and "gpt-5.6-terra" in text
-    assert d["effort"] in ("high", "xhigh", "max", "ultra")
+    assert d["primary"] == "deep" and "`gpt-6-astra-" in text
+    assert d["effort"] in ("high", "xhigh", "max")
     assert "Respond in English." in text
+    d, text, _, _ = core.route("Migrate the entire codebase to microservices", "codex", session_model="gpt-6-astra")
+    assert "stay in this session" in text and "Spawn" not in text
+
+
+def test_ultra_is_never_offered_or_accepted(monkeypatch):
+    for provider in ("claude", "codex", "antigravity"):
+        assert "ultra" not in core.effort_levels_for(provider)["levels"]
+        assert all("ultra" not in m["levels"] for m in core.models_for(provider).values())
+        q = core.build_questions({}, core.effort_levels_for(provider), core.models_for(provider))
+        assert "ultra" not in q["effort"]["criteria"]
+        assert "ultra" not in json.dumps(q.get("model", {}))
+    fake = {"answers": {"task": {"choice": "code", "confidence": 0.95}, "difficulty": {"score": 2, "confidence": 0.9},
+                        "long_context": {"noul": 0.1}, "needs_web": {"noul": 0.1}, "destructive": {"noul": 0.05},
+                        "effort": {"choice": "ultra", "confidence": 0.9}, "model": {"choice": "gpt-6-astra", "confidence": 0.9}}}
+    monkeypatch.setattr(core, "ask_jev", lambda p, q: json.loads(json.dumps(fake)))
+    d, text, _, _ = core.route("anything", "codex", backend="jev")
+    assert d["effort"] == "max" and "`gpt-6-astra-max`" in text and "ultra" not in text
+
+
+def test_jev_model_pick_every_provider(monkeypatch):
+    def fake(model, effort):
+        return {"answers": {"task": {"choice": "general", "confidence": 0.9}, "difficulty": {"score": 1, "confidence": 0.9},
+                            "long_context": {"noul": 0.1}, "needs_web": {"noul": 0.1}, "destructive": {"noul": 0.05},
+                            "effort": {"choice": effort, "confidence": 0.9}, "model": {"choice": model, "confidence": 0.9}}}
+    monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("sonnet", "low"))
+    _, text, _, _ = core.route("Write a haiku", "claude", backend="jev")
+    assert "`sonnet-worker-low`" in text
+    monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gpt-5.5", "max"))  # 5.5 tops out at xhigh
+    d, text, _, _ = core.route("Write a haiku", "codex", backend="jev")
+    assert "`gpt-5_5-xhigh`" in text and d["effort"] == "xhigh"
+    monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gemini-3.1-pro", "medium"))  # pro has low/high only
+    _, text, _, _ = core.route("Write a haiku", "antigravity", backend="jev")
+    assert "`gemini-3.1-pro-high`" in text
+    monkeypatch.setattr(core, "ask_jev", lambda p, q: fake("gpt-daybreak-red-latest", "high"))  # not selectable
+    d, _, _, _ = core.route("Write a haiku", "codex", backend="jev")
+    assert d.get("model") is None
 
 
 def test_route_antigravity_model_name_has_effort():
