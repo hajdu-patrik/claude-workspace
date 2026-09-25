@@ -8,6 +8,10 @@ dates are ISO 8601.
 ## [Unreleased]
 
 ### Changed
+- Packaging polish for external users: the README quick-start's `git clone` placeholder now has the
+  real repository URL; `pyproject.toml` gets `keywords`, `[project.urls]` (Homepage/Repository/
+  Issues/Changelog) and broader classifiers (tested Python versions, intended audience, topic) -
+  deliberately no `authors` entry, to keep the package name/attribution-free.
 - Local mock classifier accuracy: 91%/90% (hu/en) -> 100%/100% on `eval/hu_prompts.csv` /
   `eval/en_prompts.csv`, tuned against the exact confusions in `eval/results_*.csv`, not guessed:
   added missing task vocabulary (Hungarian `pushol`/`konfigurác`/`felülír`, `architektúra`/

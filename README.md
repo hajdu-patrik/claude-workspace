@@ -32,7 +32,7 @@ Requirements: Python 3.10+ and at least one of [Claude Code](https://code.claude
 [Codex CLI](https://developers.openai.com/codex) or [Antigravity CLI](https://antigravity.google/docs/cli/install/).
 
 ```bash
-git clone <this repository> jev-router
+git clone https://github.com/hajdu-patrik/claude-workspace.git jev-router
 cd jev-router
 python install.py
 ```

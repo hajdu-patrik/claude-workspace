@@ -10,12 +10,24 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = []
+keywords = ["claude-code", "codex-cli", "antigravity", "llm-router", "prompt-router", "ai-agent", "cli"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
     "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
 ]
+
+[project.urls]
+Homepage = "https://github.com/hajdu-patrik/claude-workspace"
+Repository = "https://github.com/hajdu-patrik/claude-workspace"
+Issues = "https://github.com/hajdu-patrik/claude-workspace/issues"
+Changelog = "https://github.com/hajdu-patrik/claude-workspace/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
