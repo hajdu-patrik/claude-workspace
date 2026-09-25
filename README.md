@@ -169,6 +169,8 @@ Dictate prompts into any app, in any language Whisper supports – offline and f
 See **[docs/speech-to-text.md](docs/speech-to-text.md)** for installation, model choice by hardware
 and phone dictation.
 
+---
+
 ## 📱 Remote Access
 
 Control your computer from a phone or another device under one machine name, with every tool
