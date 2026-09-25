@@ -574,6 +574,90 @@ def render(d, destructive_hit, targets, provider="claude", lang_code="hu", model
     return " ".join(p for p in parts if p)
 
 
+# Only the start of an absolute path - a real path can contain spaces ("7. Félév"), so the rest is
+# grown word by word by _longest_existing_prefix instead of matched in one no-whitespace token.
+FOREIGN_PATH_START_RE = re.compile(r'[A-Za-z]:[\\/]|(?<![:\w])/(?=\S)')
+FOREIGN_PATH_MAX_CHARS = 200  # bounds how far a candidate can grow
+FOREIGN_PATH_MAX_WORDS = 12
+FOREIGN_PATH_MAX_STARTS = 20  # bounds how many candidate starts a pathological prompt can trigger
+
+
+def _project_root(path):
+    """Nearest existing ancestor of `path` (itself included) that owns a CLAUDE.md or .claude/, or
+    None. Bounded walk: a pathological path must never hang a hook."""
+    node = path if path.is_dir() else path.parent
+    for _ in range(50):
+        if node.exists() and ((node / "CLAUDE.md").is_file() or (node / ".claude").is_dir()):
+            return node
+        parent = node.parent
+        if parent == node:
+            return None
+        node = parent
+    return None
+
+
+def _deepest_existing_ancestor(path):
+    """`path` itself if it exists, else its nearest existing ancestor; None if nothing exists."""
+    for node in (path, *path.parents):
+        if node.exists():
+            return node
+    return None
+
+
+def _longest_existing_prefix(text):
+    """The longest existing filesystem path found by growing a candidate word by word through
+    `text` (bounded) and, at each step, walking up to the candidate's nearest existing ancestor.
+    Handles both a trailing non-path suffix in one no-whitespace token (".../other/src/app.py more
+    text": stop at ".../other") and a space-containing path component ("7. Félév": a later word
+    completes it) without needing to know in advance which case applies."""
+    words = text[:FOREIGN_PATH_MAX_CHARS].split()
+    best_len, best = -1, None
+    candidate = ""
+    for word in words[:FOREIGN_PATH_MAX_WORDS]:
+        candidate = f"{candidate} {word}".strip() if candidate else word
+        trimmed = candidate.rstrip(".,;:'\")]}")
+        try:
+            ancestor = _deepest_existing_ancestor(Path(trimmed))
+        except OSError:
+            break
+        if ancestor is not None and len(str(ancestor)) > best_len:
+            best_len, best = len(str(ancestor)), str(ancestor)
+    return best
+
+
+def foreign_project_note(prompt, cwd):
+    """None, or one short heads-up when `prompt` names an absolute path into a DIFFERENT project
+    (its own CLAUDE.md/.claude) than `cwd`: Workflow and Agent tool custom subagent types are scoped
+    to the session's own root, so a workflow built for that other project's agents (e.g. orchestrator,
+    backend, frontend) cannot resolve them from here. Purely additive and best-effort: never raises,
+    and a path that cannot be resolved is silently skipped rather than reported."""
+    try:
+        if not cwd:
+            return None
+        cwd_path = Path(cwd).resolve()
+        here = _project_root(cwd_path) or cwd_path
+        starts = FOREIGN_PATH_START_RE.finditer(prompt)
+        for count, match in enumerate(starts):
+            if count >= FOREIGN_PATH_MAX_STARTS:
+                break
+            existing = _longest_existing_prefix(prompt[match.start():])
+            if not existing:
+                continue
+            try:
+                resolved = Path(existing).resolve()
+            except OSError:
+                continue
+            project = _project_root(resolved)
+            if not project or project == here or here.is_relative_to(project) or project.is_relative_to(here):
+                continue
+            return (f"this prompt names {project}, a different project with its own CLAUDE.md/.claude config - "
+                    f"Workflow and Agent tool custom subagent types are scoped to this session's own root "
+                    f"({here}), not to that path")
+    except Exception:  # noqa: BLE001 - best-effort only, must never affect routing
+        pass
+    return None
+
+
 def route(prompt, provider, backend=None, session_model=None):
     """Full pipeline used by both the hook and the MCP server. session_model: the model the calling
     session already runs (Codex's hook payload reports it) - lets a tier say "stay in-session".

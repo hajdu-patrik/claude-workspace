@@ -207,6 +207,9 @@ def route_and_log(prompt, provider, payload, cwd, queue_text):
     if queue_text:
         entry["queued"] = True
     log(entry)
+    foreign_note = core.foreign_project_note(prompt, cwd)
+    if foreign_note:
+        text += f" Note: {foreign_note}."
     return text + (" " + queue_text if queue_text else "")
 
 

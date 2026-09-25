@@ -8,6 +8,13 @@ dates are ISO 8601.
 ## [Unreleased]
 
 ### Added
+- Cross-project heads-up: when a prompt names an absolute path into a *different* project (one with
+  its own `CLAUDE.md`/`.claude/`) than the session's own working directory, the injected `[router]`
+  context now adds a one-line `Note:` explaining that Workflow/Agent tool custom subagent types are
+  scoped to this session's own root, not to that other path. Purely additive and best-effort:
+  `core.foreign_project_note()` never raises and is not required for routing to work - a path it
+  cannot resolve, or any internal failure, silently yields no note. Handles path components with
+  spaces (e.g. `7. Félév`).
 - `route` command – `python install.py route [--provider claude] [--json] <prompt text...>` (no text:
   read from stdin) – returns the router's decision for one prompt or sub-task: the rendered
   `[router] …` text, or with `--json` one object with `model`, `effort`, `agent`, `tier`, `task`,
