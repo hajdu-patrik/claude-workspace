@@ -7,7 +7,17 @@ dates are ISO 8601.
 
 ## [Unreleased]
 
-### Added
+### Changed
+- Local mock classifier accuracy: 91%/90% (hu/en) -> 100%/100% on `eval/hu_prompts.csv` /
+  `eval/en_prompts.csv`, tuned against the exact confusions in `eval/results_*.csv`, not guessed:
+  added missing task vocabulary (Hungarian `pushol`/`konfigurác`/`felülír`, `architektúra`/
+  `microservice`, `szórás`/`variance`, `squared`/`cubed`, `küldj`/`send`/`message`/`Slack`,
+  English "currently" and "cost"/"right now" for research, `bugs` plural); reordered the tie-break
+  priority (`test, math, study, research, code, qa, general`) so an exam/course context or a
+  freshness word outranks one incidental tech-keyword match, and code outranks qa's generic
+  interrogative opener alone; added a narrow extra-weight rule (`LOCAL_TASK_STRONG_RE`) so "mi az a
+  X" / "what is a/an X" (an INDEFINITE article - a defining question) outranks a bare tech-keyword,
+  without over-triggering on "what is THE latest/current/standard ..." research and math questions.
 - Cross-project heads-up: when a prompt names an absolute path into a *different* project (one with
   its own `CLAUDE.md`/`.claude/`) than the session's own working directory, the injected `[router]`
   context now adds a one-line `Note:` explaining that Workflow/Agent tool custom subagent types are

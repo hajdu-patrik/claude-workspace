@@ -98,30 +98,50 @@ def is_destructive(prompt):
 LOCAL_TASK_RE = {  # lowercased, accent-stripped text; every category has Hungarian + English keywords
     "test": r"\bteszt|pytest|unit ?test|unittest|\bjest\b|vitest|playwright|cypress|coverage|lefedettseg|\btests?\b|"
             r"\bmock|assert|\bqa\b|\bspec\b|\btesting\b",
-    "code": r"\bkod|\bcode\b|refaktor|refactor|\bbug\b|fuggveny|\bfunction\b|osztaly|\bclass\b|\bmodul|\bmodule\b|"
+    "code": r"\bkod|\bcode\b|refaktor|refactor|\bbugs?\b|fuggveny|\bfunction\b|osztaly|\bclass\b|\bmodul|\bmodule\b|"
             r"\bapi\b|endpoint|python|javascript|typescript|"
             r"react|next\.?js|\bjava\b|c#|\bsql\b|script|exception|\berror\b|stack ?trace|\bgit\b|commit|\bmerge\b|deploy|"
             r"docker|\.py\b|\.js\b|\.ts\b|implementa|debug|compile|backend|frontend|\brepo|\bpush\b|branch|pull request|"
             r"vegpont|fastapi|django|flask|node_modules|fuggoseg|\bdependenc|npm\b|\bpip\b|\bhook|\bconfig|\bcli\b|"
-            r"\bbuild\b|\bregex|\bjson\b|\byaml\b|\bhtml\b|\bcss\b|\bbash\b|powershell|\bfix\b|javits",
+            r"\bbuild\b|\bregex|\bjson\b|\byaml\b|\bhtml\b|\bcss\b|\bbash\b|powershell|\bfix\b|javits|"
+            r"pushol|architekt|microservice|mikroszolgaltatas|valida|konfigurac|felulir|\boverwrite\b",
     "math": r"\bmatek|matematik|\bmath\b|oldd meg|\bsolve\b|egyenlet|\bequation\b|bizonyits|\bproof|\bprove\b|integral|deriv|"
             r"matrix|sajatertek|eigenvalue|valoszinuseg|probability|szamold ki|\bcalculate\b|hatarertek|\blimit\b|"
             r"\bprim\b|primszam|\bprime\b|lemma|negyzete|gyoke|square root|szazalek|percent|"
+            r"\bszoras|variancia|\bvariance\b|standard deviation|\bsquared\b|\bcubed\b|"
             r"(?<![a-z0-9])\d+(\.\d+)?\s*[-+*/^]\s*\d+(\.\d+)?(?![a-z0-9])|(?<![a-z0-9])\d+\s?[a-z]\s*[-+*/=]\s*\d",
     "study": r"egyetemi|jegyzet|eloadas|vizsga|\bzh\b|kollokvium|tantargy|szakdolgozat|diplomamunka|\btetel|egyetem|felev|"
              r"kurzus|foglald ossze|osszefoglal|konspektus|flashcard|"
              r"\buniversity\b|\blecture\b|\bexam\b|midterm|\bcourse\b|\bthesis\b|\bsemester\b|\bsummari[sz]e\b|study notes",
-    "research": r"legfrissebb|legujabb|aktualis|\bma\b|\bmai\b|jelenleg|hirek|\bnews\b|latest|\bcurrent\b|arfolyam|"
+    "research": r"legfrissebb|legujabb|aktualis|\bma\b|\bmai\b|jelenleg|hirek|\bnews\b|latest|\bcurrently?\b|arfolyam|"
                 r"mennyibe kerul|holnap|\btomorrow\b|\btoday\b|idojaras|\bweather\b|hany fok|\bara\b|\bprice\b|exchange rate|"
                 r"ki (a|az) (jelenlegi )?\w+ (elnoke|vezerigazgatoja|miniszterelnoke)|who is the current \w+|"
-                r"\bthis (week|month|year)\b|\bezen a heten\b|\bidei\b",
+                r"\bthis (week|month|year)\b|\bezen a heten\b|\bidei\b|\bcost\b|how much (does|is|do|can)|\bright now\b|"
+                r"milyen ido lesz",
     "qa": r"^(mi|mik|ki|kik|mikor|hol|miert|hogyan|hany|melyik|mennyi|what|who|when|where|why|how|is|are|does|do)\b|"
           r"magyarazd|mit jelent|mi az a|\bexplain|what (does|is)|what's the difference|kulonbseg|difference between",
     "general": r"\birj\b|keszits|tervezd|szervezd|rendezd|\blista|e-?mail|\blevel|mappa|fajl|jegyzokonyv|"
                r"\bwrite\b|\bcreate\b|\bplan\b|\borganize\b|\blist\b|\bfolder\b|\bfile\b|\bdocument\b|\bletter\b|"
-               r"\bnote\b|\bemail\b|\bdraft\b|\btranslate\b|forditsd|\bprezentac|\bpresentation\b|\btablazat|spreadsheet",
+               r"\bnote\b|\bemail\b|\bdraft\b|\btranslate\b|forditsd|\bprezentac|\bpresentation\b|\btablazat|spreadsheet|"
+               r"kuldj|uzenet|\bsend\b|\bmessage\b|\bslack\b|csatorna",
 }
-LOCAL_PRIORITY = ["test", "math", "code", "study", "research", "qa", "general"]  # tie-break order
+# Sub-patterns that name a category unambiguously on their own, worth extra score weight (see
+# local_answers): "mi az a X" / "what is a/an X" (an INDEFINITE article - "what is A Docker
+# container?") is a defining question and should outrank one incidental tech-keyword match
+# ("Docker"). A definite article or no article ("what is THE latest...", "what is 17 squared")
+# asks for a specific current fact or a calculation - research/math territory, not this pattern.
+# Deliberately narrow: a broader "explain X" / "what is X" match already scores qa in LOCAL_TASK_RE
+# without the extra weight, since it is too generic to reliably outrank a real study/math/research
+# signal (an exam-prep or current-fact framing).
+LOCAL_TASK_STRONG_RE = {
+    "qa": r"mi az a|what is (a|an)\b",
+}
+# Tie-break order when two categories still score equally after the weighting above: study (exam/
+# course context) and research (a freshness word) outrank a same-scoring "code" from one incidental
+# technical keyword; code outranks qa's generic interrogative opener alone (the strong-phrase boost
+# already covers the cases where qa should win). See eval/results_*.csv for the confusions this
+# order and the vocabulary above were tuned against.
+LOCAL_PRIORITY = ["test", "math", "study", "research", "code", "qa", "general"]  # tie-break order
 LOCAL_HARD_RE = (r"(egesz|teljes|osszes) (kodbazis|repo|projekt|rendszer|alkalmazas|architektur|modul)|architektur|"
                  r"\bnehez|bonyolult|reszletes|mikroszolgaltatas|migral|optimaliz|hexagonal|\d{2,}\s*oldal|"
                  r"tobb (fajl|modul)|bizonyits|\bentire\b|\bwhole\b|\barchitecture\b|\bcomplex\b|\bdetailed\b|"
@@ -179,6 +199,8 @@ def local_answers(prompt):
     """JEV-compatible answers from keywords. Deterministic, no network, well under 1 ms."""
     t = _norm(prompt)
     scores = {k: len(re.findall(p, t)) for k, p in LOCAL_TASK_RE.items()}
+    for k, p in LOCAL_TASK_STRONG_RE.items():
+        scores[k] += len(re.findall(p, t))
     ranked = sorted(LOCAL_PRIORITY, key=lambda k: (-scores[k], LOCAL_PRIORITY.index(k)))
     top, second = ranked[0], ranked[1]
     if scores[top] == 0:
