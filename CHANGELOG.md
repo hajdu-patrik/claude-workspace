@@ -7,6 +7,12 @@ dates are ISO 8601.
 
 ## [Unreleased]
 
+### Fixed
+- Cross-project heads-up on Linux/macOS: a Windows-style path in the prompt (`C:\...`) is not rooted
+  there, so its only existing "ancestor" was `.` - the hook's own working directory - and a session
+  started inside any project got a false "different project" note (it also failed CI on Linux/macOS).
+  Candidates that are not rooted on the current OS are now skipped.
+
 ### Changed
 - Packaging polish for external users: the README quick-start's `git clone` placeholder now has the
   real repository URL; `pyproject.toml` gets `keywords`, `[project.urls]` (Homepage/Repository/

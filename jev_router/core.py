@@ -638,8 +638,13 @@ def _longest_existing_prefix(text):
     for word in words[:FOREIGN_PATH_MAX_WORDS]:
         candidate = f"{candidate} {word}".strip() if candidate else word
         trimmed = candidate.rstrip(".,;:'\")]}")
+        path = Path(trimmed)
+        if not path.anchor:
+            # Not rooted on this OS (e.g. "C:\..." on POSIX): its only existing ancestor would be
+            # ".", i.e. the process's working directory - never a path the prompt actually named.
+            break
         try:
-            ancestor = _deepest_existing_ancestor(Path(trimmed))
+            ancestor = _deepest_existing_ancestor(path)
         except OSError:
             break
         if ancestor is not None and len(str(ancestor)) > best_len:

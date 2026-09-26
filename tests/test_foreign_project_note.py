@@ -53,7 +53,15 @@ def test_never_raises_on_empty_or_missing_cwd():
     assert core.foreign_project_note("anything", None) is None
 
 
-def test_never_raises_on_garbage_prompt_text(tmp_path):
+def test_never_raises_on_garbage_prompt_text(tmp_path, monkeypatch):
     here = _make_project(tmp_path, "here")
+    # The process cwd is another project (as in CI, where it is the repo checkout): a candidate that
+    # is not rooted on this OS ("C:\" on POSIX) must not fall back to "." and report the cwd.
+    monkeypatch.chdir(_make_project(tmp_path, "process_cwd"))
     garbage = "C:\\ * ? | < > \" weird/// http://example.com/a/b/c ../../.. "
     assert core.foreign_project_note(garbage, str(here)) is None
+
+
+def test_unrooted_candidate_never_resolves_to_the_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(_make_project(tmp_path, "process_cwd"))
+    assert core._longest_existing_prefix("relative/dir and more words") is None
