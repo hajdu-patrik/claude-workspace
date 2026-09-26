@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
-"""Provider-independent router core: classification + decision + rendering. Standard library only.
+"""Provider-independent router core: (prompt, provider) -> decision -> instruction text.
 
-Used by every entry point (hooks.py for Claude Code / Codex CLI / Antigravity CLI hooks, and
-mcp_server.py for the hook-less chat modes). This file knows nothing about any tool's I/O
-format: just (prompt, provider) -> decision -> instruction text.
-
-Backend: if TYPESAFE_API_KEY is set, JEV (TypeSafe) decides; if not, or the JEV call fails, the
-local keyword classifier (local_answers) does - the temporary "mock JEV". ROUTER_BACKEND=
-jev|local|auto switches it without code changes once real JEV access exists.
-
-Per-provider "what to pick" (tier -> agent/model/effort/text) lives in routes.json +
-targets.json, not here: adding a provider or renaming a model only means editing those.
-
-Config is always read from this package (jev_router/config/), never from the current project -
-the hook is installed globally and runs inside arbitrary other projects.
+JEV (TypeSafe) classifies when a token is set; otherwise, or when the call fails, the local keyword
+classifier does. Config is read from this package, never from the current project: the hook runs
+globally inside arbitrary other projects.
 """
 import json
 import os
@@ -29,12 +19,12 @@ CFG_DIR = Path(__file__).resolve().parent / "config"
 STATE_DIR = Path(os.environ.get("JEV_ROUTER_HOME", str(Path.home() / ".jev-router")))
 
 API_URL = os.environ.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone")
-JEV_MODEL = os.environ.get("JEV_MODEL", "jev-1.13.0")  # pinned version, not an alias
+JEV_MODEL = os.environ.get("JEV_MODEL", "jev-1.13.0")
 TIMEOUT_S = float(os.environ.get("JEV_TIMEOUT", "4"))
 MIN_CONF = float(os.environ.get("ROUTER_MIN_CONFIDENCE", "0.6"))
 DESTRUCTIVE_T = float(os.environ.get("ROUTER_DESTRUCTIVE_THRESHOLD", "0.3"))
 LONG_CTX_T = float(os.environ.get("ROUTER_LONG_CONTEXT_THRESHOLD", "0.7"))
-MAX_STATE_CHARS = 6000  # JEV's state limit is 32k tokens; keep it short (context rot)
+MAX_STATE_CHARS = 6000  # well under JEV's 32k-token limit: long states degrade its answers
 SKILL_CANDIDATES = int(os.environ.get("ROUTER_SKILL_CANDIDATES", "8"))
 BACKEND = os.environ.get("ROUTER_BACKEND", "auto").lower()
 
@@ -60,11 +50,8 @@ def _norm(text):
     return "".join(c for c in t if not unicodedata.combining(c))
 
 
-# --- Safety net ------------------------------------------------------------------------------
-# Code-level backup for JEV's destructive-question (JEV itself can be swayed by prompt injection).
-# Runs on lowercased, accent-stripped text. Deliberately object-bound: a bare "remove"/"order"/
-# "pay" is NOT enough ("Remove the unused import", "sort these in order" are harmless) - it needs
-# a destructive object or a money/publishing context.
+# Code-level backup for JEV's destructive question, which prompt injection can sway. Object-bound on
+# purpose: a bare "remove"/"order"/"pay" is harmless ("Remove the unused import").
 _OBJ = (r"(file|fajl|folder|mappa|director|konyvtar|branch|repo|database|adatbazis|tabla|table|"
         r"record|rekord|user|felhasznalo|account|fiok|profil|email|level|uzenet|message|commit|"
         r"backup|mentes|data|adat|disk|lemez|partition|particio|bucket|cluster|server|szerver|"
@@ -92,10 +79,8 @@ def is_destructive(prompt):
     return bool(DESTRUCTIVE_RE.search(_norm(prompt)))
 
 
-# --- Local (keyless) backend = temporary JEV mock ---------------------------------------------
-# Keyword classifier for Hungarian + English prompts, producing an answers dict shaped exactly
-# like the JEV response so decide() never needs to know which backend answered.
-LOCAL_TASK_RE = {  # lowercased, accent-stripped text; every category has Hungarian + English keywords
+# Local keyword classifier (Hungarian + English, accent-stripped). Its answers have JEV's shape.
+LOCAL_TASK_RE = {
     "test": r"\bteszt|pytest|unit ?test|unittest|\bjest\b|vitest|playwright|cypress|coverage|lefedettseg|\btests?\b|"
             r"\bmock|assert|\bqa\b|\bspec\b|\btesting\b",
     "code": r"\bkod|\bcode\b|refaktor|refactor|\bbugs?\b|fuggveny|\bfunction\b|osztaly|\bclass\b|\bmodul|\bmodule\b|"
@@ -125,23 +110,13 @@ LOCAL_TASK_RE = {  # lowercased, accent-stripped text; every category has Hungar
                r"\bnote\b|\bemail\b|\bdraft\b|\btranslate\b|forditsd|\bprezentac|\bpresentation\b|\btablazat|spreadsheet|"
                r"kuldj|uzenet|\bsend\b|\bmessage\b|\bslack\b|csatorna",
 }
-# Sub-patterns that name a category unambiguously on their own, worth extra score weight (see
-# local_answers): "mi az a X" / "what is a/an X" (an INDEFINITE article - "what is A Docker
-# container?") is a defining question and should outrank one incidental tech-keyword match
-# ("Docker"). A definite article or no article ("what is THE latest...", "what is 17 squared")
-# asks for a specific current fact or a calculation - research/math territory, not this pattern.
-# Deliberately narrow: a broader "explain X" / "what is X" match already scores qa in LOCAL_TASK_RE
-# without the extra weight, since it is too generic to reliably outrank a real study/math/research
-# signal (an exam-prep or current-fact framing).
+# Extra weight: "what is a/an X" (indefinite article) is a defining question and outranks one
+# incidental tech keyword. "what is THE latest ..." is research, so the pattern stays this narrow.
 LOCAL_TASK_STRONG_RE = {
     "qa": r"mi az a|what is (a|an)\b",
 }
-# Tie-break order when two categories still score equally after the weighting above: study (exam/
-# course context) and research (a freshness word) outrank a same-scoring "code" from one incidental
-# technical keyword; code outranks qa's generic interrogative opener alone (the strong-phrase boost
-# already covers the cases where qa should win). See eval/results_*.csv for the confusions this
-# order and the vocabulary above were tuned against.
-LOCAL_PRIORITY = ["test", "math", "study", "research", "code", "qa", "general"]  # tie-break order
+# Tie-break order, tuned against the confusions in eval/results_*.csv.
+LOCAL_PRIORITY = ["test", "math", "study", "research", "code", "qa", "general"]
 LOCAL_HARD_RE = (r"(egesz|teljes|osszes) (kodbazis|repo|projekt|rendszer|alkalmazas|architektur|modul)|architektur|"
                  r"\bnehez|bonyolult|reszletes|mikroszolgaltatas|migral|optimaliz|hexagonal|\d{2,}\s*oldal|"
                  r"tobb (fajl|modul)|bizonyits|\bentire\b|\bwhole\b|\barchitecture\b|\bcomplex\b|\bdetailed\b|"
@@ -151,11 +126,9 @@ LOCAL_LONG_RE = (r"\d{2,}\s*oldal|(egesz|teljes|osszes) (kodbazis|repo|projekt|k
                  r"\d{2,}\s*pages?|(entire|whole|full) (codebase|repo|project|book|file)")
 
 
-# --- Parallel agents (token budget!) -------------------------------------------------------------
-# How many EXTRA agents may run in parallel next to the primary worker. Every extra agent multiplies
-# token usage, so this is deliberately strict: 0 is the answer for the vast majority of requests.
+# Extra parallel agents multiply token usage, so 0 is the answer for almost every request.
 MAX_EXTRA_AGENTS = int(os.environ.get("ROUTER_MAX_EXTRA_AGENTS", "4"))
-AGENTS_MIN_CONF = 0.7  # fixed and strict, independent of ROUTER_MIN_CONFIDENCE: below it, one agent fewer
+AGENTS_MIN_CONF = 0.7  # independent of ROUTER_MIN_CONFIDENCE; below it, one agent fewer
 AGENT_CRITERIA = {
     "0": "DEFAULT - choose this for the vast majority of requests. One agent does the whole job: questions, "
          "explanations, a bug fix, a feature in one area, a test file, a document, a refactor of one module.",
@@ -179,7 +152,6 @@ _FROM_SCRATCH = r"from scratch|semmibol|nulladrol|\bnew (page|site|app|feature)\
 
 
 def local_agents_answer(t, level):
-    """Mock of JEV's parallel-agent question - strict on purpose (t: normalized prompt)."""
     if level < 2:
         return {"choice": "0", "confidence": 0.9}
     streams = {k for k, p in _STREAMS.items() if re.search(p, t)}
@@ -196,7 +168,6 @@ def local_agents_answer(t, level):
 
 
 def local_answers(prompt):
-    """JEV-compatible answers from keywords. Deterministic, no network, well under 1 ms."""
     t = _norm(prompt)
     scores = {k: len(re.findall(p, t)) for k, p in LOCAL_TASK_RE.items()}
     for k, p in LOCAL_TASK_STRONG_RE.items():
@@ -224,7 +195,7 @@ def local_answers(prompt):
 
 
 def local_skill_answer(candidates):
-    """Mock of JEV's skill choice: take the pre-filter's best candidate only when it clearly wins."""
+    """The pre-filter's best candidate, only when it clearly wins."""
     if not candidates:
         return None
     best_score, best = candidates[0]
@@ -235,7 +206,6 @@ def local_skill_answer(candidates):
     return None
 
 
-# --- Config ----------------------------------------------------------------------------------
 def load_json(name, default):
     try:
         return json.loads((CFG_DIR / name).read_text(encoding="utf-8"))
@@ -244,8 +214,6 @@ def load_json(name, default):
 
 
 def user_config():
-    """Per-user settings written by the installer (~/.jev-router/config.json): JEV token, remote
-    machine name, ... Never part of the repository."""
     try:
         return json.loads((STATE_DIR / "config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -253,14 +221,11 @@ def user_config():
 
 
 def jev_key():
-    """TypeSafe/JEV token: the environment wins, then the installer's config file."""
     return os.environ.get("TYPESAFE_API_KEY") or user_config().get("typesafe_api_key") or None
 
 
 def model_overrides():
-    """Per-user model availability (~/.jev-router/models.local.json, written by
-    `python install.py models --probe`): {provider: {model_id: {"selectable": bool}}}. The repo's
-    models.json is a generic catalog; what a given account can actually use differs per plan."""
+    """Per-account model availability written by `models --probe`; models.json is only the catalog."""
     try:
         return json.loads((STATE_DIR / "models.local.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -282,8 +247,7 @@ def excluded_efforts():
 
 
 def models_for(provider):
-    """{id: model_dict} of the models JEV may choose for this provider (selectable=true), each
-    with 'levels' already stripped of the excluded efforts."""
+    """Selectable models of the provider, with the excluded effort levels already stripped."""
     cfg = load_json("models.json", {})
     m = cfg.get(provider) or cfg.get(base_provider(provider)) or {}
     local = model_overrides().get(base_provider(provider), {})
@@ -296,8 +260,6 @@ def models_for(provider):
 
 
 def effort_levels_for(provider):
-    """{"levels": [...], "excluded": [...]} - union of every selectable model's levels, minus the
-    excluded ones, in EFFORT_ORDER. None if the provider has no models recorded."""
     models = models_for(provider)
     levels = sorted({l for m in models.values() for l in m["levels"]},
                     key=lambda l: EFFORT_ORDER.index(l) if l in EFFORT_ORDER else 99)
@@ -308,9 +270,7 @@ def effort_levels_for(provider):
 
 
 def clamp_effort(effort, allowed):
-    """Nearest allowed level to `effort` (by EFFORT_ORDER distance; ties go to the higher one).
-    This is what makes a tier's effort always valid for the model behind it (e.g. never 'ultra'
-    on a model that tops out at 'max')."""
+    """Nearest allowed level to `effort`; ties go to the higher one."""
     if not allowed:
         return effort
     if not effort or effort in allowed:
@@ -320,11 +280,8 @@ def clamp_effort(effort, allowed):
                                        -(EFFORT_ORDER.index(a) if a in EFFORT_ORDER else 2)))
 
 
-# --- JEV ---------------------------------------------------------------------------------------
 def build_questions(skills, effort=None, models=None):
-    """skills: {name: description} - only the pre-filtered candidates, never the whole catalog.
-    models: {id: model_dict} from models_for() - every selectable model becomes a criterion of the
-    'model' question, with the effort levels it supports."""
+    """skills: only the pre-filtered candidates, never the whole catalog."""
     q = {
         "task": {"type": "choice", "instructions": "What kind of request is this? The text may be in Hungarian or English.",
                  "criteria": TASKS},
@@ -344,7 +301,7 @@ def build_questions(skills, effort=None, models=None):
         criteria = dict(skills)
         criteria["none"] = "No listed skill is clearly needed for this request"
         q["skill"] = {"type": "choice", "instructions": "Which skill best fits this request?", "criteria": criteria}
-        for name, desc in skills.items():  # speculative fan-out: one Noul per candidate skill
+        for name, desc in skills.items():
             q[safe_key(name)] = {"type": "noul", "instructions": f"The request needs this capability: {desc}"}
     if effort and effort.get("levels"):
         usable = [l for l in effort["levels"] if l not in set(effort.get("excluded", []))]
@@ -379,13 +336,6 @@ def use_jev(backend=None):
 
 
 def classify(prompt, skills=None, backend=None, effort=None, models=None):
-    """(prompt) -> JEV-shaped answers dict. The single function that changes behaviour once real
-    JEV access exists: decide() and its callers stay the same.
-
-    skills: [(score, skill_dict)] pre-filter candidates (see catalog.prefilter).
-    effort: dict from effort_levels_for(provider). JEV picks the level itself; the mock derives
-    it from difficulty. An excluded level (e.g. 'ultra' for Claude) is stripped here in code too,
-    never trusting the model-based answer alone for a hard constraint."""
     candidates = skills or []
     if use_jev(backend):
         answers = _jev_answers(prompt, candidates, effort, models)
@@ -403,7 +353,6 @@ def _jev_answers(prompt, candidates, effort, models):
 
 
 def _mock_answers(prompt, candidates, effort):
-    """The local mock: keyword answers + the pre-filter's clear skill winner + an effort from difficulty."""
     answers = local_answers(prompt)
     answers["_backend"] = "local"
     picked = local_skill_answer(candidates)
@@ -417,8 +366,7 @@ def _mock_answers(prompt, candidates, effort):
 
 
 def _mock_effort(lvl, effort):
-    """0 -> lowest, 1 -> middle, 2 -> second-highest: the mock never picks the very top level
-    (max/ultra) on its own - that is left to JEV or an explicit override. None without levels."""
+    """The mock never picks the very top level on its own; that is left to JEV or an override."""
     if not effort or not effort.get("levels"):
         return None
     usable = [l for l in effort["levels"] if l not in set(effort.get("excluded", []))]
@@ -429,8 +377,7 @@ def _mock_effort(lvl, effort):
 
 
 def _enforce_policy(answers, effort, models):
-    """Hard policy, never trusting the model-based answer alone: an excluded level ('ultra') becomes
-    the highest allowed one, and a model JEV invented (or one not selectable) is dropped."""
+    """Hard policy in code, never trusting the model-based answer alone."""
     banned = excluded_efforts()
     if answers.get("effort", {}).get("choice") in banned:
         usable = [l for l in (effort or {}).get("levels", EFFORT_ORDER) if l not in banned]
@@ -440,7 +387,6 @@ def _enforce_policy(answers, effort, models):
     return answers
 
 
-# --- Decision ------------------------------------------------------------------------------------
 def is_cloud():
     return os.environ.get("ROUTER_MODE", "").lower() == "cloud" or os.environ.get("CLAUDE_CODE_REMOTE", "").lower() == "true"
 
@@ -453,14 +399,12 @@ def apply_cloud(primary, verify, routes):
 
 
 def decide(answers, routes, skills_by_name=None):
-    """Deterministic decision from the answers, with a DIFFERENT routes.json block per provider.
-    'primary' is a tier name (main/fast/deep/test, or for Claude cli:codex / cli:antigravity);
-    render() translates tier -> concrete agent/model/text via targets.json."""
+    """'primary' is a tier name; render() turns it into a concrete agent/model/text."""
     task = answers["task"]
     diff = answers["difficulty"]
     level = max(0, min(int(round(float(diff.get("score", 1)))), len(DIFFICULTY) - 1))
     if float(diff.get("confidence", 0)) < MIN_CONF:
-        level = max(level, 1)  # uncertain difficulty: don't go for the cheapest option
+        level = max(level, 1)
 
     notes = []
     if float(task.get("confidence", 0)) < MIN_CONF:
@@ -495,14 +439,13 @@ def decide(answers, routes, skills_by_name=None):
         result["effort"] = answers["effort"].get("choice")
     m = answers.get("model")
     if m and float(m.get("confidence", 0)) >= MIN_CONF:
-        result["model"] = m["choice"]  # JEV's explicit model pick (validated in classify)
+        result["model"] = m["choice"]
     result["extra_agents"] = extra_agents(answers.get("agents"), level)
     return result
 
 
 def extra_agents(ans, level):
-    """Strict clamp of the parallel-agent answer: 0..MAX_EXTRA_AGENTS, one step lower when the answer
-    is not confident, and never more than 1 extra for a request below the 'hard' difficulty level."""
+    """Never more than 1 extra agent below the 'hard' level."""
     if not ans:
         return 0
     try:
@@ -517,15 +460,8 @@ def extra_agents(ans, level):
 
 
 def resolve_tier(d, targets, models=None, session_model=None):
-    """(text, effort, model, agent) for the decided tier. model is None when the tier answers
-    in-session (plain text); agent is the worker the text delegates to, None when the text names none.
-
-    A tier in targets.json is plain text (answer in-session), or a spec
-    {"model", "efforts", "agent", "text", "same_model_text", "slug"}. When JEV picked a model
-    (d["model"]) and the tier is listed in targets["model_pick_tiers"], targets["model_pick"] is
-    used with that model instead. Effort: clamped to the model's real levels (models.json); the
-    local mock is additionally kept inside the tier's own 'efforts' range. Placeholders in
-    agent/text: {model}, {model_} (dots -> '_', TOML-safe role names), {effort}, {slug}, {agent}."""
+    """(text, effort, model, agent). A plain-text tier answers in-session (model and agent None).
+    Placeholders in agent/text: {model}, {model_} (TOML-safe), {effort}, {slug}, {agent}."""
     spec = _tier_spec(d, targets)
     if isinstance(spec, str):
         return spec, d.get("effort"), None, None
@@ -542,8 +478,6 @@ def resolve_tier(d, targets, models=None, session_model=None):
 
 
 def _tier_spec(d, targets):
-    """The decided tier's spec from targets.json - targets['model_pick'] with JEV's model when JEV
-    picked one for a tier listed in targets['model_pick_tiers']."""
     tiers = targets.get("tiers", {})
     chosen = d.get("model")
     if chosen and targets.get("model_pick") and d["primary"] in targets.get("model_pick_tiers", []):
@@ -552,8 +486,7 @@ def _tier_spec(d, targets):
 
 
 def _tier_effort(d, spec, mdef):
-    """The decided effort clamped to the tier's range (not for JEV's own model pick) and then to
-    the model's real levels; None for a model without effort levels."""
+    """JEV's own model pick is not bound to the tier's effort range, only to the model's levels."""
     effort = d.get("effort")
     if spec.get("efforts") and not (d.get("model") and d.get("backend") == "jev"):
         effort = clamp_effort(effort, spec["efforts"])
@@ -563,7 +496,6 @@ def _tier_effort(d, spec, mdef):
 
 
 def render(d, destructive_hit, targets, provider="claude", lang_code="hu", models=None, session_model=None):
-    """The instruction text injected in front of the model's turn."""
     text, effort, model, agent = resolve_tier(d, targets, models, session_model)
     d["effort"] = effort
     if model:
@@ -596,17 +528,16 @@ def render(d, destructive_hit, targets, provider="claude", lang_code="hu", model
     return " ".join(p for p in parts if p)
 
 
-# Only the start of an absolute path - a real path can contain spaces ("7. Félév"), so the rest is
-# grown word by word by _longest_existing_prefix instead of matched in one no-whitespace token.
+# Only the start: a real path can contain spaces, so the rest is grown word by word.
 FOREIGN_PATH_START_RE = re.compile(r'[A-Za-z]:[\\/]|(?<![:\w])/(?=\S)')
-FOREIGN_PATH_MAX_CHARS = 200  # bounds how far a candidate can grow
+# Bounds that keep a pathological prompt from slowing the hook down.
+FOREIGN_PATH_MAX_CHARS = 200
 FOREIGN_PATH_MAX_WORDS = 12
-FOREIGN_PATH_MAX_STARTS = 20  # bounds how many candidate starts a pathological prompt can trigger
+FOREIGN_PATH_MAX_STARTS = 20
 
 
 def _project_root(path):
-    """Nearest existing ancestor of `path` (itself included) that owns a CLAUDE.md or .claude/, or
-    None. Bounded walk: a pathological path must never hang a hook."""
+    """Nearest ancestor (itself included) with a CLAUDE.md or .claude/, or None."""
     node = path if path.is_dir() else path.parent
     for _ in range(50):
         if node.exists() and ((node / "CLAUDE.md").is_file() or (node / ".claude").is_dir()):
@@ -619,7 +550,6 @@ def _project_root(path):
 
 
 def _deepest_existing_ancestor(path):
-    """`path` itself if it exists, else its nearest existing ancestor; None if nothing exists."""
     for node in (path, *path.parents):
         if node.exists():
             return node
@@ -627,11 +557,8 @@ def _deepest_existing_ancestor(path):
 
 
 def _longest_existing_prefix(text):
-    """The longest existing filesystem path found by growing a candidate word by word through
-    `text` (bounded) and, at each step, walking up to the candidate's nearest existing ancestor.
-    Handles both a trailing non-path suffix in one no-whitespace token (".../other/src/app.py more
-    text": stop at ".../other") and a space-containing path component ("7. Félév": a later word
-    completes it) without needing to know in advance which case applies."""
+    """Longest existing path at the start of `text`. Growing word by word handles both trailing
+    prose and path components that contain spaces."""
     words = text[:FOREIGN_PATH_MAX_CHARS].split()
     best_len, best = -1, None
     candidate = ""
@@ -640,8 +567,7 @@ def _longest_existing_prefix(text):
         trimmed = candidate.rstrip(".,;:'\")]}")
         path = Path(trimmed)
         if not path.anchor:
-            # Not rooted on this OS (e.g. "C:\..." on POSIX): its only existing ancestor would be
-            # ".", i.e. the process's working directory - never a path the prompt actually named.
+            # Not rooted on this OS ("C:\..." on POSIX): its only existing ancestor is the cwd.
             break
         try:
             ancestor = _deepest_existing_ancestor(path)
@@ -653,11 +579,8 @@ def _longest_existing_prefix(text):
 
 
 def foreign_project_note(prompt, cwd):
-    """None, or one short heads-up when `prompt` names an absolute path into a DIFFERENT project
-    (its own CLAUDE.md/.claude) than `cwd`: Workflow and Agent tool custom subagent types are scoped
-    to the session's own root, so a workflow built for that other project's agents (e.g. orchestrator,
-    backend, frontend) cannot resolve them from here. Purely additive and best-effort: never raises,
-    and a path that cannot be resolved is silently skipped rather than reported."""
+    """A heads-up when `prompt` names a path in a different project than `cwd`: custom subagent types
+    are scoped to the session's own root, so that project's agents cannot be resolved from here."""
     try:
         if not cwd:
             return None
@@ -680,15 +603,14 @@ def foreign_project_note(prompt, cwd):
             return (f"this prompt names {project}, a different project with its own CLAUDE.md/.claude config - "
                     f"Workflow and Agent tool custom subagent types are scoped to this session's own root "
                     f"({here}), not to that path")
-    except Exception:  # noqa: BLE001 - best-effort only, must never affect routing
+    except Exception:  # noqa: BLE001 - must never affect routing
         pass
     return None
 
 
 def route(prompt, provider, backend=None, session_model=None):
-    """Full pipeline used by both the hook and the MCP server. session_model: the model the calling
-    session already runs (Codex's hook payload reports it) - lets a tier say "stay in-session".
-    Returns (decision_dict, rendered_text, destructive_hit, error_or_None)."""
+    """-> (decision, rendered_text, destructive_hit, error). session_model: the model the calling
+    session already runs, so a tier can say "stay in-session"."""
     routes_all, targets_all = load_json("routes.json", {}), load_json("targets.json", {})
     routes = routes_all.get(provider) or routes_all.get(base_provider(provider)) or {"default": "main", "table": {}}
     targets = targets_all.get(provider) or targets_all.get(base_provider(provider)) or {"tiers": {"main": "Answer directly in this session."}}
@@ -709,7 +631,7 @@ def route(prompt, provider, backend=None, session_model=None):
     error = None
     try:
         answers = classify(prompt, candidates, backend=backend, effort=effort, models=models)
-    except Exception as exc:  # network, timeout, 429, malformed JEV response: fall back to the mock
+    except Exception as exc:  # any JEV failure falls back to the local classifier
         error = f"{type(exc).__name__}: {exc}"[:200]
         answers = classify(prompt, candidates, backend="local", effort=effort, models=models)
     d = decide(answers, routes, by_name)
@@ -723,7 +645,7 @@ def route(prompt, provider, backend=None, session_model=None):
 
 
 def override_for(prompt, targets):
-    """Manual override tags (#opus, #fast, ...) - whole-tag match, so #fast never fires on #faster."""
+    """Whole-tag match, so #fast never fires on #faster."""
     low = prompt.lower()
     for tag, tier in targets.get("overrides", {}).items():
         if re.search(r"(?<![\w#])" + re.escape(tag.lower()) + r"(?![\w-])", low):

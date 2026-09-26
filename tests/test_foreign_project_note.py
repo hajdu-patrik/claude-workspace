@@ -1,4 +1,3 @@
-"""Unit tests for core.foreign_project_note. Run: python -m pytest tests -q"""
 from jev_router import core
 
 
@@ -40,7 +39,6 @@ def test_no_note_when_the_referenced_path_has_no_claude_config(tmp_path):
 
 
 def test_no_note_when_the_current_project_is_an_ancestor_of_the_referenced_path(tmp_path):
-    """A path inside a subproject of the current one is not \"foreign\" - it's still under here."""
     here = _make_project(tmp_path, "here")
     (here / "vendor" / "lib").mkdir(parents=True)
     (here / "vendor" / "lib" / "CLAUDE.md").write_text("# vendored\n", encoding="utf-8")
@@ -55,8 +53,7 @@ def test_never_raises_on_empty_or_missing_cwd():
 
 def test_never_raises_on_garbage_prompt_text(tmp_path, monkeypatch):
     here = _make_project(tmp_path, "here")
-    # The process cwd is another project (as in CI, where it is the repo checkout): a candidate that
-    # is not rooted on this OS ("C:\" on POSIX) must not fall back to "." and report the cwd.
+    # as in CI, where the cwd is the repo checkout: "C:\" on POSIX must not resolve to it
     monkeypatch.chdir(_make_project(tmp_path, "process_cwd"))
     garbage = "C:\\ * ? | < > \" weird/// http://example.com/a/b/c ../../.. "
     assert core.foreign_project_note(garbage, str(here)) is None

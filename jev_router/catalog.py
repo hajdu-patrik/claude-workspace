@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
-"""Skill catalog + cheap pre-filter for the router. Standard library only.
+"""Catalog of every skill on this machine (~/.skills/catalog.json) + a cheap pre-filter.
 
-Every skill on this machine - whichever tool it was installed for - is indexed into one catalog
-(~/.skills/catalog.json) so the router (JEV, or the local mock until JEV access exists) can pick
-the right one for a prompt, and a skill native to one provider can still be used by another
-(the router then tells the model to read that skill's SKILL.md directly).
-
-Sources (read-only; only ~/.skills is managed by us, the rest belong to their apps):
-  ~/.skills/<name>/SKILL.md                       - the shared hub (linked into all three tools)
-  ~/.claude/skills/synced/**/SKILL.md             - skills synced by the Claude desktop app
-  ~/.claude/plugins/synced/**/SKILL.md            - Claude plugin skills (plugin:skill)
-  ~/.codex/skills/.system/<name>/SKILL.md         - Codex built-ins
-  ~/.gemini/antigravity-cli/builtin/skills/<name> - Antigravity CLI built-ins
-
-~170 skills is far too many to ask JEV about in one request (one choice criterion + one Noul
-question each), so prefilter() narrows them to a handful of candidates with an IDF-weighted
-keyword overlap first. Skill descriptions are English while prompts are often Hungarian, hence
+A skill native to one tool can be used by another: the router then points at its SKILL.md.
+Asking JEV about ~170 skills at once is too much, so prefilter() narrows them first with an
+IDF-weighted keyword overlap. Descriptions are English while prompts are often Hungarian, hence
 the small HU->EN glossary.
 """
 import json
@@ -32,9 +20,8 @@ CATALOG = HUB / "catalog.json"
 PROVIDERS = ["claude", "codex", "antigravity"]
 
 SOURCES = [
-    # (root, recursive, native_in, name prefix: None | "plugin" (from the plugin dir) | fixed string)
-    # Claude exposes desktop-synced skills as "anthropic-skills:<name>" and plugin skills as
-    # "<plugin>:<name>" - the catalog uses the same names so "Relevant skill: X" is invocable as-is.
+    # (root, recursive, native_in, name prefix). The prefixes match Claude's own skill names, so
+    # "Relevant skill: X" is invocable as-is.
     (HUB, False, PROVIDERS, None),
     (HOME / ".claude" / "skills" / "synced", True, ["claude"], "anthropic-skills"),
     (HOME / ".claude" / "plugins" / "synced", True, ["claude"], "plugin"),
@@ -79,7 +66,6 @@ def _norm(text):
 
 
 def stem(t):
-    """Crude English stemmer - enough to match debug/debugging, test/tests/testing, deploy/deployed."""
     for suf in ("ing", "ions", "ion", "ed", "es", "s"):
         if len(t) > len(suf) + 3 and t.endswith(suf):
             return t[: -len(suf)]
@@ -96,7 +82,6 @@ def tokens(text):
 
 
 def _unquote(value):
-    """A YAML scalar without its surrounding whitespace and one pair of optional quotes."""
     value = value.strip()
     if value[:1] in ("'", '"'):
         value = value[1:]
@@ -106,7 +91,6 @@ def _unquote(value):
 
 
 def _indented_block(lines):
-    """A folded/literal YAML block: its indented lines (up to the next key), joined by spaces."""
     out = []
     for line in lines:
         if line.startswith((" ", "\t")):
@@ -117,7 +101,7 @@ def _indented_block(lines):
 
 
 def parse_frontmatter(skill_md):
-    """(name, description) from a SKILL.md YAML frontmatter - tolerant, no YAML dependency."""
+    """(name, description) from a SKILL.md frontmatter, without a YAML dependency."""
     try:
         text = Path(skill_md).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -131,7 +115,7 @@ def parse_frontmatter(skill_md):
     dm = _DESCRIPTION.search(fm)
     if dm:
         first = dm.group(1).strip()
-        if first in _BLOCK_MARKERS:  # block scalar (or the value starts on the next line)
+        if first in _BLOCK_MARKERS:
             desc = _indented_block(fm[dm.end():].split("\n")[1:])
         else:
             desc = first.strip("'\"")
@@ -151,7 +135,6 @@ def _skill_dirs(root, recursive):
 
 
 def _qualified_name(name, skill_dir, root, prefix):
-    """The name the tool invokes the skill by: '<plugin>:<name>', '<prefix>:<name>' or plain."""
     if prefix == "plugin":
         try:  # .../plugins/synced/<account>/<plugin>/skills/<skill>/SKILL.md
             return f"{skill_dir.relative_to(root).parts[1]}:{name}"
@@ -161,7 +144,7 @@ def _qualified_name(name, skill_dir, root, prefix):
 
 
 def build_catalog():
-    """Scans every source, dedups by name (first source wins: the hub beats app-managed copies)."""
+    """First source wins a name clash: the hub beats app-managed copies."""
     seen, items = set(), []
     for root, recursive, native_in, prefix in SOURCES:
         for d in _skill_dirs(root, recursive):
@@ -208,45 +191,39 @@ def _doc_freq(docs):
 
 
 def _overlap(q, nt, dt, df, n_docs):
-    """(score, hits, name_hits): IDF-weighted overlap of the prompt tokens q with one skill's name
-    tokens nt and description tokens dt; a hit on the name counts double."""
+    """(score, hits, name_hits); a hit on the skill's name counts double."""
     matched = [t for t in q if t in nt or t in dt]
     score = sum(((2 if t in nt else 1) * math.log(1 + n_docs / df.get(t, 1)) for t in matched), 0.0)
     return score, len(matched), sum(t in nt for t in matched)
 
 
 def _name_evidence(nt, name_hits, hits, df):
-    """The name counts as "hit" only if most of its words match AND the prompt overlaps the skill in
-    at least two places ("auth" alone does not make google-cloud-recipe-auth the skill for
-    "refactor the auth module"; "learning" alone does not make `learn` the skill for an ML question)."""
+    """Most of the name's words must match AND the prompt must overlap the skill in two places:
+    "auth" alone does not make google-cloud-recipe-auth the skill for "refactor the auth module"."""
     if not nt:
         return False
-    # e.g. "brainstorm" is distinctive on its own; short everyday words ("learn", "docs") are not
     rare_name = name_hits == len(nt) and all(df.get(t, 0) <= 3 and len(t) >= 6 for t in nt)
     only = next(iter(nt))
-    short_single = len(nt) == 1 and len(only) < 6 and only not in FORMAT_NAMES  # "learn", "docs": too ambiguous alone
+    short_single = len(nt) == 1 and len(only) < 6 and only not in FORMAT_NAMES  # "learn", "docs"
     return name_hits / len(nt) >= 0.66 and (hits >= 2 or rare_name) and not short_single
 
 
 def _mention_bonus(skill_name, raw):
-    """Score bonus when the prompt names the skill itself; 0 when it does not."""
-    if skill_name.lower() in raw:  # explicit mention, e.g. "use the cloud-run-basics skill"
+    if skill_name.lower() in raw:
         return 6
     base = skill_name.split(":")[-1].lower()
     distinctive = "-" in base or base in FORMAT_NAMES or re.search(r"\b" + re.escape(base) + r"\s+(skill|keszseg)", raw)
     # (?![a-z0-9]) rather than (?![\w-]): Hungarian suffixes are hyphenated ("pdf-et")
     if distinctive and re.search(r"(?<![\w-])" + re.escape(base) + r"(?![a-z0-9])", raw):
-        return 4  # a distinctive base name ("pptx", "cloud-run-basics") named in the prompt
+        return 4
     return 0
 
 
 def prefilter(prompt, catalog, n=8, min_score=1.5):
-    """[(score, skill_dict)] best-first, at most n, only candidates scoring >= min_score.
-    Score: IDF-weighted overlap of prompt tokens with the skill's name+description tokens; a hit
-    on the skill's own name counts double (naming a skill explicitly is the strongest signal)."""
+    """[(score, skill_dict)] best-first, at most n, each scoring >= min_score."""
     if not catalog:
         return []
-    # name tokens: only the part after "plugin:" - the plugin/vendor prefix says nothing about the task
+    # the plugin/vendor prefix says nothing about the task
     docs = [(s, tokens(s["name"].split(":")[-1].replace("-", " ")), tokens(s["description"])) for s in catalog]
     df = _doc_freq(docs)
     q = _expand(tokens(prompt))
@@ -260,7 +237,7 @@ def prefilter(prompt, catalog, n=8, min_score=1.5):
             score += bonus
             name_hit = True
         if score >= min_score:
-            # _hits/_name_hit: evidence strength, used by the local mock to decide whether to commit
+            # evidence strength: the local classifier commits to a skill only on a name hit
             scored.append((round(score, 2), dict(s, _hits=hits, _name_hit=name_hit)))
     scored.sort(key=lambda x: -x[0])
     return scored[:n]

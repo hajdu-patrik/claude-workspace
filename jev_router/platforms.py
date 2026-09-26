@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""OS abstraction for the installer: config locations, directory links, executables, detection.
+"""OS abstraction: config locations, directory links, executables, tool detection.
 
-Windows uses directory junctions (no admin rights or Developer Mode needed); macOS and Linux use
-symlinks. Every path is derived from the current user's home directory - nothing machine-specific
-is stored in the repository.
+Windows uses directory junctions, which need no admin rights or Developer Mode.
 """
 import json
 import os
@@ -18,9 +16,7 @@ IS_WINDOWS = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
 
 
-# --- locations ---------------------------------------------------------------------------------
 def claude_desktop_config():
-    """Claude desktop app's MCP config (Chat / Cowork)."""
     if IS_WINDOWS:
         app_data = Path(os.environ.get("APPDATA", HOME / "AppData" / "Roaming"))
     elif IS_MAC:
@@ -41,19 +37,17 @@ PATHS = {
     "codex_hooks": CODEX_HOME / "hooks.json",
     "codex_config": CODEX_HOME / "config.toml",
     "codex_agents": CODEX_HOME / "agents",
-    "codex_skills": HOME / ".agents" / "skills",          # personal skills location Codex scans
+    "codex_skills": HOME / ".agents" / "skills",
     "agy_config": AGY_CONFIG,
     "agy_hooks": AGY_CONFIG / "hooks.json",
     "agy_skills_json": AGY_CONFIG / "skills.json",
     "agy_mcp": AGY_CONFIG / "mcp_config.json",
-    "agy_agents": AGY_CONFIG / "agents",                  # custom agents: <name>/agent.md
+    "agy_agents": AGY_CONFIG / "agents",
 }
 
 
-# --- links -----------------------------------------------------------------------------------------
 def is_link(p):
-    """Symlink or Windows junction. Path.is_junction() only exists on Python 3.12+, so older
-    versions check the reparse-point attribute directly."""
+    """Symlink or junction. Path.is_junction() needs Python 3.12+."""
     p = Path(p)
     try:
         if p.is_symlink():
@@ -66,7 +60,6 @@ def is_link(p):
 
 
 def link_dir(link, target):
-    """Create a directory link: junction on Windows, symlink elsewhere."""
     link, target = Path(link), Path(target)
     link.parent.mkdir(parents=True, exist_ok=True)
     if IS_WINDOWS:
@@ -78,7 +71,7 @@ def link_dir(link, target):
 
 
 def unlink_dir(link):
-    """Remove a directory link only - never the target's contents."""
+    """Removes the link only, never the target's contents."""
     link = Path(link)
     if IS_WINDOWS:
         os.rmdir(link)
@@ -86,9 +79,8 @@ def unlink_dir(link):
         link.unlink()
 
 
-# --- executables -------------------------------------------------------------------------------
 def find_exe(name):
-    """PATH first, then the installers' default locations (a fresh install is often not on PATH yet)."""
+    """PATH first, then default install locations: a fresh install is often not on PATH yet."""
     found = shutil.which(name)
     if found:
         return found
@@ -106,8 +98,7 @@ def find_exe(name):
 
 
 def short_path(p):
-    """Windows 8.3 short form of an existing path (no spaces), else the path unchanged. Antigravity
-    runs hook commands through `cmd /c`, which mangles quoted paths - a short path needs no quotes."""
+    """Windows 8.3 form, which needs no quotes: Antigravity's `cmd /c` mangles quoted paths."""
     p = str(p)
     if not IS_WINDOWS or " " not in p:
         return p
@@ -122,9 +113,7 @@ def short_path(p):
 
 
 def is_terminal(stream):
-    """True only for an interactive console. On Windows isatty() is also True for the NUL device
-    (`< NUL`, Git Bash's `< /dev/null`), where waiting for input would hang forever: there the
-    handle must also be a real console (GetConsoleMode succeeds)."""
+    """On Windows isatty() is also True for the NUL device, where waiting for input hangs forever."""
     try:
         if stream is None or not stream.isatty():
             return False
@@ -139,8 +128,7 @@ def is_terminal(stream):
 
 
 def python_exe():
-    """A stable interpreter for hooks: the base interpreter when running inside a virtualenv (the
-    venv may be deleted later), else sys.executable."""
+    """The base interpreter inside a virtualenv: the venv may be deleted later."""
     exe = sys.executable or ("python" if IS_WINDOWS else "python3")
     if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
         exe = getattr(sys, "_base_executable", exe) or exe
@@ -148,7 +136,6 @@ def python_exe():
 
 
 def app_running(name):
-    """True if a process named `name` (Windows: `name.exe`, macOS/Linux: exact process name) runs."""
     if IS_WINDOWS:
         code, out = run(["tasklist", "/FI", f"IMAGENAME eq {name}.exe", "/FO", "CSV", "/NH"])
         return code == 0 and f'"{name.lower()}.exe"' in out.lower()
@@ -156,9 +143,7 @@ def app_running(name):
 
 
 def python_exe_windowless():
-    """Interpreter for stdio servers (MCP): pythonw.exe on Windows. A host that runs without a
-    console (e.g. a detached background daemon) would otherwise open a terminal window for
-    python.exe. pythonw still talks over the stdin/stdout pipes the host passes it."""
+    """pythonw.exe on Windows: a host without a console would open a terminal window for python.exe."""
     exe = python_exe()
     if IS_WINDOWS:
         w = Path(exe).with_name("pythonw.exe")
@@ -168,8 +153,7 @@ def python_exe_windowless():
 
 
 def shell_arg(p):
-    """One command-line argument, safe for sh (Claude/Codex on POSIX), bash/cmd (Windows) and
-    Antigravity's `cmd /c`: short path on Windows, shell-quoted on POSIX."""
+    """Short path on Windows (see short_path), shell-quoted on POSIX."""
     import shlex
     if IS_WINDOWS:
         return short_path(p).replace("\\", "/")
@@ -177,12 +161,11 @@ def shell_arg(p):
 
 
 def python_cmd():
-    """Interpreter as a ready-to-use command-line word."""
     return shell_arg(python_exe())
 
 
 def run(argv, timeout=30):
-    """(returncode, combined output) - never raises."""
+    """(returncode, combined output); never raises."""
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                            encoding="utf-8", errors="replace")
@@ -191,7 +174,6 @@ def run(argv, timeout=30):
         return None, f"{type(exc).__name__}: {exc}"
 
 
-# --- detection ---------------------------------------------------------------------------------
 PROVIDERS = {
     "claude": {"label": "Claude Code", "exe": "claude",
                "install": "https://code.claude.com/docs/en/quickstart",
@@ -206,7 +188,7 @@ PROVIDERS = {
 
 
 def detect_one(provider, deep=True):
-    """{"installed", "path", "version", "logged_in" (True/False/None=unknown), "detail"}."""
+    """logged_in is None when unknown."""
     spec = PROVIDERS[provider]
     exe = find_exe(spec["exe"])
     info = {"provider": provider, "label": spec["label"], "installed": bool(exe), "path": exe,

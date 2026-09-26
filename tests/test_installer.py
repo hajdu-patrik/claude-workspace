@@ -31,7 +31,6 @@ def ctx(out):
     return out["hookSpecificOutput"]["additionalContext"] if out else ""
 
 
-# --- queue protection ------------------------------------------------------------------------------
 def test_queue_same_session(monkeypatch, capsys):
     first = hook(monkeypatch, capsys, "claude", "UserPromptSubmit", {"prompt": "Refactor the parser module", "session_id": "s1", "cwd": "/w"})
     assert "QUEUE" not in ctx(first)
@@ -68,7 +67,6 @@ def test_antigravity_stop_prints_json(monkeypatch, capsys):
     assert hook(monkeypatch, capsys, "antigravity", "Stop", {"conversationId": "x", "fullyIdle": True}) == {}
 
 
-# --- user config -------------------------------------------------------------------------------------
 def test_jev_token_from_config_and_env(tmp_path, monkeypatch):
     assert core.jev_key() is None
     assert not core.use_jev()
@@ -90,7 +88,6 @@ def test_model_overrides_per_account(tmp_path):
     assert "ultra" not in models["gpt-6-sol"]["levels"]
 
 
-# --- platform + installer ------------------------------------------------------------------------------
 def test_link_dir_roundtrip(tmp_path):
     target = tmp_path / "hub" / "skill"
     target.mkdir(parents=True)
@@ -129,8 +126,7 @@ def test_install_hooks_idempotent_and_uninstall(tmp_path, monkeypatch):
 
 
 def test_null_device_stdin_is_not_a_terminal(monkeypatch):
-    """Windows: isatty() is True for NUL (`< NUL`, Git Bash's `< /dev/null`), so an unattended run
-    waited forever at the first question. The null device never counts as a terminal."""
+    """Windows: isatty() is True for NUL, so an unattended run waited forever at the first question."""
     from jev_router import cli
     with open(os.devnull, encoding="utf-8") as nul:
         assert not P.is_terminal(nul)
@@ -195,7 +191,6 @@ def test_owned_is_real_containment(tmp_path, monkeypatch):
 
 
 def test_agents_for_every_provider_follow_the_model_role(monkeypatch):
-    """Claude and Codex: an agent per (model, effort) with its role's template; Antigravity: one per model tier."""
     from jev_router import hub as skills_hub
     monkeypatch.setattr(skills_hub, "PROVIDERS", ("claude", "codex", "antigravity"))
     plan = {(p, name): (model, effort, desc, body) for p, name, model, effort, desc, body in skills_hub.planned_agents()}
@@ -210,7 +205,7 @@ def test_agents_for_every_provider_follow_the_model_role(monkeypatch):
 
 
 def test_antigravity_agent_files(tmp_path, monkeypatch, capsys):
-    """<name>/agent.md with a tier, subagent-only; stale generated agents go, hand-written ones stay."""
+    """Stale generated agents go, hand-written ones stay."""
     from jev_router import hub as skills_hub
     agents = tmp_path / "agents"
     for name, text in (("gemini-old-worker", f"---\nname: x\n# {skills_hub.GEN_MARK}\n---\n"), ("mine", "---\nname: mine\n---\n")):
@@ -258,8 +253,6 @@ def test_bad_json_config_is_reported_not_fatal(tmp_path, monkeypatch, capsys):
 
 
 def test_windows_remote_loops_run_headless(tmp_path, monkeypatch):
-    """Remote services start under `conhost --headless` (no terminal window at logon); the loop script
-    restarts the command, and a previous instance is stopped before the task is registered again."""
     from jev_router import remote
     calls = []
     monkeypatch.setattr(remote, "BIN", tmp_path)
@@ -280,8 +273,6 @@ def test_windows_remote_loops_run_headless(tmp_path, monkeypatch):
 
 
 def test_agy_setup_and_watchdog_scripts(monkeypatch):
-    """Antigravity is registered, wrapped and restarted in one scheduled task (outside any MSIX
-    container); the watchdog re-wraps the entry, restarts a missing daemon and idle remote tasks."""
     from jev_router import remote
     seen = []
     monkeypatch.setattr(remote, "_run_once", lambda script, wait_s=30: seen.append(script) or "ok")

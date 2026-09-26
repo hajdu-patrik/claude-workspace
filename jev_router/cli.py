@@ -48,7 +48,6 @@ VALUE_FLAGS = ("--name", "--providers", "--jev-token", "--remote", "--workdir")
 
 
 def parse_args(argv):
-    """Accepts both `--flag=value` and `--flag value` (for the flags that take a value)."""
     flags, positional, i = {}, [], 0
     while i < len(argv):
         a = argv[i]
@@ -73,14 +72,13 @@ FLAGS, POSITIONAL, COMMAND, YES, DRY = {}, [], "setup", False, False
 
 
 def configure(argv):
-    """Parse the command line into the module-level settings used by every step."""
     global FLAGS, POSITIONAL, COMMAND, YES, DRY
     if any(a in ("-h", "--help", "help") for a in argv):
         print(__doc__)
         sys.exit(0)
     FLAGS, POSITIONAL = parse_args(argv)
     COMMAND = POSITIONAL[0] if POSITIONAL else "setup"
-    if COMMAND == "route":  # main() dispatches `route` only as the first argument
+    if COMMAND == "route":  # dispatched by main() only as the first argument
         print(f"route: must be the first argument\n{ROUTE_USAGE}", file=sys.stderr)
         sys.exit(2)
     if COMMAND not in COMMANDS or len(POSITIONAL) > 1:
@@ -94,13 +92,12 @@ def say(msg=""):
 
 
 def interactive():
-    """A person can answer questions: stdin is a real console (not a pipe, a file or NUL)."""
+    """stdin is a real console, not a pipe, a file or NUL."""
     return P.is_terminal(sys.stdin)
 
 
 def ask(question, default="y"):
-    """--yes accepts the default. Without a terminal (and without --yes) nothing is changed:
-    every question is answered "no", so an unattended run can never move files unasked."""
+    """Without a terminal or --yes every answer is "no": an unattended run never moves files unasked."""
     if YES:
         return default.lower().startswith("y")
     if not interactive():
@@ -120,17 +117,15 @@ def save_config(cfg):
     if DRY:
         return
     STATE.mkdir(parents=True, exist_ok=True)
-    # created owner-only from the start (it holds the JEV token); os.open's mode is ignored on Windows
+    # owner-only from the start: it holds the JEV token
     fd = os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(json.dumps(cfg, indent=2))
     if not P.IS_WINDOWS:
-        os.chmod(CONFIG, 0o600)  # an existing file keeps its old mode otherwise
+        os.chmod(CONFIG, 0o600)  # os.open's mode does not apply to an existing file
 
 
-# --- 1. detection ------------------------------------------------------------------------------------
 def report(lines, indent=""):
-    """(tool, ok, message) lines from remote.setup() / remote.remove()."""
     for tool, ok, msg in lines:
         say(f"{indent}[{'OK' if ok else '!!'}] {tool}: {msg}")
 
@@ -165,7 +160,6 @@ def detect_and_login():
     return providers
 
 
-# --- 2. JEV token -----------------------------------------------------------------------------------------
 def configure_jev(cfg):
     say("\n== 2/5  JEV / TypeSafe (the routing decision engine)")
     token = FLAGS.get("--jev-token")
@@ -183,7 +177,6 @@ def configure_jev(cfg):
                          else "built-in local model (add a token later with --jev-token=...)"))
 
 
-# --- 3 + 4. hooks, skills, agents ------------------------------------------------------------------------------
 def connect(providers):
     say("\n== 3/5  Hooks + MCP server")
     integrations.install(providers, apply=not DRY)
@@ -205,9 +198,7 @@ def connect(providers):
     hub.cmd_doctor()
 
 
-# --- 5. optional extras -----------------------------------------------------------------------------------------
 def ask_remote_name(cfg):
-    """The machine name for remote access: typed in, else the saved one, else the hostname."""
     default = cfg.get("remote_name") or P.hostname()
     if YES or not interactive():
         return default
@@ -228,8 +219,7 @@ def extras(providers, cfg):
 
 
 def remote_workdir(cfg):
-    """Folder remote Claude sessions start in: --workdir, else the saved one, else this repository.
-    Claude Code only serves trusted folders, and never the home directory."""
+    """Claude Code only serves trusted folders, and never the home directory."""
     wd = FLAGS.get("--workdir")
     return str(Path(wd).resolve()) if isinstance(wd, str) else (cfg.get("remote_workdir") or str(REPO))
 
@@ -245,9 +235,7 @@ def next_steps(providers):
     say("  * Health check any time: python install.py doctor")
 
 
-# --- sub-commands ----------------------------------------------------------------------------------------------------
 def codex_accepts(codex, model_id):
-    """True if the account can use this Codex model (one tiny low-effort prompt)."""
     code, out = P.run([codex, "exec", "--skip-git-repo-check", "-m", model_id, "-c", "model_reasoning_effort=low",
                        "#norouter Reply with exactly: OK"], timeout=180)
     low = out.lower()
@@ -260,8 +248,7 @@ def record_model(local, provider, model_id, ok):
 
 
 def probe_models():
-    """Tests every catalog model of Codex (one tiny prompt each) and reads Antigravity's model list;
-    the result goes to ~/.jev-router/models.local.json and overrides models.json per account."""
+    """Writes models.local.json, which overrides models.json per account."""
     catalog = json.loads((PKG / "config" / "models.json").read_text(encoding="utf-8"))
     local = json.loads(MODELS_LOCAL.read_text(encoding="utf-8")) if MODELS_LOCAL.exists() else {}
     if codex := P.find_exe("codex"):
@@ -278,12 +265,11 @@ def probe_models():
         STATE.mkdir(parents=True, exist_ok=True)
         MODELS_LOCAL.write_text(json.dumps(local, indent=2), encoding="utf-8")
         hub.APPLY = True
-        hub.cmd_agents()  # agents/roles for exactly the available models
+        hub.cmd_agents()
     say(f"Saved to {MODELS_LOCAL}")
 
 
 def run_skills():
-    """Re-link skills, regenerate worker agents and rebuild the catalog for the installed tools."""
     found = P.detect(deep=False)
     hub.PROVIDERS = tuple(p for p, i in found.items() if i["installed"])
     hub.APPLY = "--apply" in FLAGS
@@ -296,7 +282,6 @@ def run_skills():
         say("\nDry run only. Re-run with --apply to write the changes.")
 
 
-# --- route: the decision as a side-effect-free query (for sub-tasks, other programs) ------------------------
 ROUTE_USAGE = "usage: python install.py route [--provider claude] [--json] [--] <prompt text...>   (no text: read stdin)"
 ROUTE_PROVIDERS = ALL + ("claude-chat",)
 ROUTE_KEYS = ("provider", "model", "effort", "agent", "tier", "task", "difficulty", "extra_agents", "destructive",
@@ -304,7 +289,6 @@ ROUTE_KEYS = ("provider", "model", "effort", "agent", "tier", "task", "difficult
 
 
 def provider_option(argv, i):
-    """(provider, index of its last argument) for `--provider X` or `--provider=X` at argv[i]."""
     _, eq, provider = argv[i].partition("=")
     if not eq:
         i += 1
@@ -315,8 +299,8 @@ def provider_option(argv, i):
 
 
 def parse_route_args(argv):
-    """(provider, as_json, prompt text or None when none was given), or None for --help.
-    Raises ValueError on a usage error; its message never echoes an option's value."""
+    """(provider, as_json, prompt or None), or None for --help. A usage error's message never
+    echoes an option's value."""
     provider, as_json, words, i = "claude", False, [], 0
     while i < len(argv):
         a = argv[i]
@@ -338,8 +322,7 @@ def parse_route_args(argv):
 
 
 def read_stdin():
-    """The piped prompt ('' for an interactive terminal: never wait for typing). utf-8-sig: PowerShell
-    pipes can prepend a BOM."""
+    """'' for an interactive terminal: never wait for typing."""
     stream = sys.stdin
     if stream is None or P.is_terminal(stream):
         return ""
@@ -348,9 +331,7 @@ def read_stdin():
 
 
 def route_decision(prompt, provider):
-    """The decision core.route() makes for the hooks, as a flat JSON-ready dict with ROUTE_KEYS.
-    No side effects: no queue state, no routing log. #norouter / #privat: not routed at all, and the
-    prompt never leaves this machine (only the local safety regex and language detection run)."""
+    """No side effects: no queue state, no routing log. #norouter / #privat never leave this machine."""
     out = dict.fromkeys(ROUTE_KEYS)
     out.update(provider=provider, extra_agents=0, text="")
     if any(tag in prompt.lower() for tag in hooks.SKIP_TAGS):
@@ -367,7 +348,7 @@ def route_decision(prompt, provider):
 
 
 def run_route(argv):
-    """`route` command. Exit codes: 0 success, 2 usage error, 1 unexpected error (type only on stderr)."""
+    """Exit codes: 0 success, 2 usage error, 1 unexpected error."""
     try:
         parsed = parse_route_args(argv)
     except ValueError as exc:
@@ -384,7 +365,7 @@ def run_route(argv):
             return 2
         result = route_decision(prompt, provider)
         if as_json:
-            print(json.dumps(result))  # ASCII-escaped: safe for any console code page
+            print(json.dumps(result))  # ASCII-escaped, safe for any console code page
         elif result["text"]:
             print(result["text"])
     except Exception as exc:  # noqa: BLE001 - stable exit code; never print details (could hold secrets)
@@ -394,7 +375,6 @@ def run_route(argv):
 
 
 def run_setup():
-    """The interactive setup (steps 1-5). Returns the exit code."""
     say("jev-router setup" + (" (dry run - nothing will be changed)" if DRY else ""))
     providers = detect_and_login()
     if not providers:
@@ -438,4 +418,4 @@ def main(argv=None):
     configure(argv)
     commands = {"setup": run_setup, "doctor": doctor.main, "skills": run_skills, "models": probe_models,
                 "detect": lambda: print_report(P.detect()), "remote": run_remote, "uninstall": run_uninstall}
-    return commands[COMMAND]() or 0  # the sub-commands return None (success) or an exit code
+    return commands[COMMAND]() or 0

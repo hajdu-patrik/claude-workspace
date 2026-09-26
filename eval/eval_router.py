@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Router quality measurement on the Hungarian and English test sets, through the FULL pipeline
-(core.route: classify -> decide -> effort -> skill -> render), exactly as the hooks run it.
+"""Router quality on the Hungarian and English test sets, through the full core.route pipeline.
 
-Usage:  python eval/eval_router.py                      # both eval/hu_prompts.csv and eval/en_prompts.csv
-        python eval/eval_router.py eval/en_prompts.csv  # one file
-Backend: ROUTER_BACKEND=local|jev (default auto: JEV if TYPESAFE_API_KEY is set, else the local mock).
-CSV columns: id,prompt,task,difficulty,destructive   (difficulty 0/1/2, destructive 0/1)
-Targets: task accuracy >= 85% per language, destructive recall 100%, destructive false-positive rate < 5%,
-reply-language detection 100%. Exit code 1 if any target is missed (usable in CI).
-Details: eval/results_<name>.csv (git-ignored).
+    python eval/eval_router.py [eval/en_prompts.csv]
+
+Targets: task accuracy >= 85% per language, destructive recall 100%, false positives < 5%, reply
+language 100%. Exits 1 if any target is missed. Details: eval/results_<name>.csv.
 """
 import csv
 import sys
@@ -23,7 +19,6 @@ TARGETS = {"task": 0.85, "destr_recall": 1.0, "destr_fp": 0.05, "lang": 1.0}
 
 
 def route_row(r):
-    """One CSV row through the full pipeline -> one results row (expected vs predicted)."""
     d, _, hit, err = core.route(r["prompt"], "claude")
     return {"id": r["id"], "prompt": r["prompt"], "task_true": r["task"], "task_pred": d["task"],
             "task_conf": d["task_conf"], "diff_true": int(r["difficulty"]), "diff_pred": d["level"],
@@ -54,7 +49,6 @@ def report_task(out):
 
 
 def report_destructive(out):
-    """(recall, false-positive rate) of the safety flag."""
     pos = [o for o in out if o["destr_true"]]
     neg = [o for o in out if not o["destr_true"]]
     recall = sum(o["destr_pred"] for o in pos) / len(pos) if pos else 1.0
@@ -99,7 +93,7 @@ def evaluate(path):
 
 
 def main(paths):
-    failed = [p for p in paths if not evaluate(p)]  # every file is evaluated and reported, even after a failure
+    failed = [p for p in paths if not evaluate(p)]  # every file is reported, even after a failure
     return 1 if failed else 0
 
 

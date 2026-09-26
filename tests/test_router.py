@@ -1,4 +1,3 @@
-"""Unit tests for the router (Hungarian + English). Run: python -m pytest tests -q"""
 import io
 import json
 import sys
@@ -33,7 +32,6 @@ def isolated(tmp_path, monkeypatch):
     return tmp_path
 
 
-# --- language ---------------------------------------------------------------------------------
 @pytest.mark.parametrize("text,expected", [
     ("Mi Magyarország fővárosa?", "hu"),
     ("irj egy fuggvenyt ami megforditja a stringet", "hu"),
@@ -47,7 +45,6 @@ def test_language(text, expected):
     assert lang.detect(text) == expected
 
 
-# --- safety regex ---------------------------------------------------------------------------------
 @pytest.mark.parametrize("text", [
     "Töröld a régi branch-eket a repóból", "Delete all files in the temp folder", "rm -rf build/",
     "git push --force origin main", "Küldd el ezt az e-mailt Péternek", "Send an email to the team",
@@ -68,7 +65,6 @@ def test_destructive_false_positives(text):
     assert not core.is_destructive(text), text
 
 
-# --- local classifier (JEV mock) -------------------------------------------------------------------
 @pytest.mark.parametrize("text,task", [
     ("Mi Magyarország fővárosa?", "qa"), ("What is the capital of France?", "qa"),
     ("Írj pytest teszteket a parser modulhoz", "test"), ("Write unit tests for the parser", "test"),
@@ -91,7 +87,6 @@ def test_hard_difficulty():
     assert core.local_answers("A teljes név mező legyen kötelező")["difficulty"]["score"] < 2  # 'teljes' alone is not hard
 
 
-# --- effort --------------------------------------------------------------------------------------
 def test_clamp_effort():
     assert core.clamp_effort("max", ["high", "xhigh"]) == "xhigh"
     assert core.clamp_effort("low", ["high", "xhigh", "max"]) == "high"
@@ -105,7 +100,6 @@ def test_claude_never_ultra():
     assert ans["effort"]["choice"] != "ultra"
 
 
-# --- full route per provider ------------------------------------------------------------------------
 def test_route_claude_hard_code_goes_to_deep_worker_with_verify():
     d, text, hit, err = core.route("Refaktoráld az egész kódbázist hexagonális architektúrára", "claude")
     assert d["primary"] == "deep"
@@ -223,7 +217,6 @@ def test_jev_answers_are_used(monkeypatch):
     assert d["effort"] == "max"  # ultra stripped for Claude, clamped into deep tier
 
 
-# --- hook I/O ------------------------------------------------------------------------------------
 def run(monkeypatch, capsys, provider, event, payload):
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode("utf-8"))))
     assert run_hook.main([provider, event]) == 0
@@ -283,7 +276,6 @@ def test_log_redacts_secrets(monkeypatch, capsys):
     assert "[redacted]" in entry["prompt"]
 
 
-# --- skills ------------------------------------------------------------------------------------------
 def test_parse_frontmatter_block_description(tmp_path):
     p = tmp_path / "SKILL.md"
     p.write_text("---\nname: demo\ndescription: >\n  Line one\n  line two.\nlicense: x\n---\nbody", encoding="utf-8")
@@ -303,7 +295,6 @@ def test_prefilter_hungarian_glossary():
     assert skill_index.prefilter("Mi Magyarország fővárosa?", CATALOG) == []
 
 
-# --- MCP ---------------------------------------------------------------------------------------------
 def test_mcp_protocol():
     init = mcp_server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
     assert init["result"]["serverInfo"]["name"] == "jev-router"
@@ -332,7 +323,6 @@ def test_local_skill_pick_needs_name_evidence():
     assert pick("Írj egy PDF-et és egy pptx prezentációt")[0] == "anthropic-skills:pptx"   # format name + glossary
 
 
-# --- parallel agents (strict: token budget) ------------------------------------------------------
 @pytest.mark.parametrize("text,expected", [
     ("Mi Magyarország fővárosa?", 0),
     ("Fix the bug in the login function", 0),

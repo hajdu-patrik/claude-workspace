@@ -1,31 +1,19 @@
 #!/usr/bin/env python3
 """Shared skill hub (~/.skills) + generated worker agents for Claude Code, Codex and Antigravity.
 
-Driven by the installer: `python install.py` (full setup) and `python install.py skills [--apply]`
-(re-link, regenerate agents, rebuild the catalog, check health). Mutating steps are dry runs unless
-APPLY is set.
+    ~/.skills/<name>/SKILL.md            real folder, the single source of truth
+    ~/.skills/<bundled>     -> jev_router/skills/<name>
+    ~/.claude/skills/<name> -> ~/.skills/<name>          Claude Code
+    ~/.agents/skills/<name> -> ~/.skills/<name>          Codex
+    ~/.gemini/config/skills.json  absolute ~/.skills + jev_router/skills   Antigravity
 
-Layout (the hub is the single source of truth; everything else is a directory link - no
-admin rights or Developer Mode needed on Windows):
-    ~/.skills/<name>/SKILL.md            real folder (moved here from each tool's own skill folder)
-    ~/.skills/<bundled>     -> jev_router/skills/<name>  (skills shipped with jev-router)
-    ~/.claude/skills/<name> -> ~/.skills/<name>          Claude Code (CLI + desktop Code tab)
-    ~/.agents/skills/<name> -> ~/.skills/<name>          Codex (CLI + ChatGPT app's Codex mode)
-    ~/.gemini/config/skills.json  entries: [<absolute ~/.skills>, <absolute jev_router/skills>]  Antigravity
-Links are junctions on Windows and symlinks on macOS/Linux, one per skill rather than one for the
-whole folder: ~/.claude/skills also holds app-managed content (synced/), and a fully linked skills
-directory is a known Claude Code regression.
-
-Worker agents (one fixed model + effort each; Antigravity pins only a model tier):
     ~/.claude/agents/<name>.md                    Claude Code subagents
-    ~/.codex/agents/<name>.toml + [agents.*]      Codex roles (block in ~/.codex/config.toml)
+    ~/.codex/agents/<name>.toml + [agents.*]      Codex roles
     ~/.gemini/config/agents/<name>/agent.md       Antigravity subagents
-The body and description come from the template of the model's role (models.json 'role'):
-jev_router/templates/agents/<fast|balanced|deep|test>-worker.md.
 
-Safety: never deletes a real directory. Only junctions this tool can prove it owns (pointing into
-the hub or jev_router/skills/) are ever removed/replaced; a name collision is reported, not resolved.
-A stale generated agent file (marked GEN_MARK) is removed; its Antigravity folder only when then empty.
+One link per skill, not one for the whole folder: ~/.claude/skills also holds app-managed content,
+and a fully linked skills directory is a known Claude Code regression. Never deletes a real
+directory: only links it can prove it owns are replaced, and a name collision is only reported.
 """
 import itertools
 import json
@@ -41,7 +29,7 @@ PKG = Path(__file__).resolve().parent
 REPO = PKG.parent
 HOME = Path.home()
 HUB = catalog.HUB
-REPO_SKILLS = PKG / "skills"            # skills bundled with jev-router
+REPO_SKILLS = PKG / "skills"
 AGENT_TEMPLATES = PKG / "templates" / "agents"
 CLAUDE_SKILLS = P.PATHS["claude_skills"]
 CODEX_SKILLS = P.PATHS["codex_skills"]
@@ -53,7 +41,7 @@ CODEX_CONFIG = P.PATHS["codex_config"]
 AGY_AGENTS = P.PATHS["agy_agents"]
 DEFAULT_ROLE = "balanced"
 PROVIDERS = ("claude", "codex", "antigravity")  # narrowed by the installer to what is installed
-APP_MANAGED = {"synced"}  # folders inside ~/.claude/skills owned by the desktop app
+APP_MANAGED = {"synced"}  # owned by the Claude desktop app
 GEN_MARK = "generated-by: jev-router"
 TOML_BEGIN, TOML_END = "# >>> jev-router agents (generated - edit jev_router/config/targets.json, not this block)", "# <<< jev-router agents"
 
@@ -78,11 +66,11 @@ def target_of(p):
 
 
 def mk_junction(link, target):
-    P.link_dir(link, target)  # junction on Windows, symlink on macOS/Linux
+    P.link_dir(link, target)
 
 
 def rm_junction(link):
-    P.unlink_dir(link)  # removes the link only, never the target's contents
+    P.unlink_dir(link)
 
 
 def owned(link):
@@ -93,7 +81,7 @@ def owned(link):
     if t is None:
         return False
     for base in (target_of(HUB), target_of(REPO_SKILLS)):
-        # real path containment (not a string prefix: ~/.skills-old must not count as ~/.skills)
+        # path containment, not a string prefix: ~/.skills-old is not inside ~/.skills
         if base is not None and (t == base or base in t.parents):
             return True
     return False
@@ -122,17 +110,14 @@ def repo_skills():
     return sorted(p for p in REPO_SKILLS.iterdir() if catalog.is_skill_dir(p))
 
 
-# --- commands -------------------------------------------------------------------------------------
-# User-installed skill folders of every tool; each real folder is moved into the hub and replaced by
-# a link, so the tool keeps working and every other tool gets the skill too. App-managed folders
-# (Claude desktop's synced/, Codex's .system/) stay where they are - the catalog indexes them.
+# Real skill folders here are moved into the hub and replaced by a link. App-managed folders stay put.
 MIGRATE_SOURCES = {"claude": [CLAUDE_SKILLS], "codex": [CODEX_SKILLS, LEGACY_CODEX_SKILLS],
                    "antigravity": [HOME / ".gemini" / "config" / "skills"]}
 
 
 def cmd_migrate():
     moved = 0
-    sources = [src for p in PROVIDERS for src in MIGRATE_SOURCES.get(p, [])]  # only the selected tools
+    sources = [src for p in PROVIDERS for src in MIGRATE_SOURCES.get(p, [])]
     candidates = [d for src in sources if src.is_dir() for d in sorted(src.iterdir())]
     if not candidates:
         print("nothing to migrate")
@@ -158,7 +143,6 @@ def cmd_migrate():
 
 
 def cmd_link():
-    # 1) repo-owned skills are exposed through the hub
     for d in repo_skills():
         ensure_link(HUB / d.name, d, f"hub <- repo '{d.name}'")
     names = _link_hub_skills()
@@ -168,7 +152,6 @@ def cmd_link():
 
 
 def _link_hub_skills():
-    """2) every hub skill into Claude Code and Codex. Returns the skill names."""
     names = set()
     # a dry run has not linked the repo skills into the hub yet: plan their tool links too
     pending = [] if APPLY else [HUB / d.name for d in repo_skills()]
@@ -184,8 +167,7 @@ def _link_hub_skills():
 
 
 def _drop_stale_links(names):
-    """3) drop stale links we own (target gone / skill removed from the hub); ~/.codex/skills is
-    Codex's legacy location - its skills are served from ~/.agents/skills instead."""
+    """~/.codex/skills is Codex's legacy location; its skills are served from ~/.agents/skills."""
     for base in (CLAUDE_SKILLS, CODEX_SKILLS, LEGACY_CODEX_SKILLS):
         links = base.iterdir() if base.is_dir() else []
         for link in links:
@@ -194,8 +176,7 @@ def _drop_stale_links(names):
 
 
 def _register_hub_with_antigravity():
-    """4) Antigravity: one manifest entry for the whole hub. Must be an ABSOLUTE path: agy 1.2.9
-    rejects "~/.skills" at runtime ("must be an absolute path"), despite its docs."""
+    """Absolute paths only: agy 1.2.9 rejects "~/.skills" at runtime, despite its docs."""
     cfg = {}
     if AGY_SKILLS_JSON.exists():
         try:
@@ -206,9 +187,7 @@ def _register_hub_with_antigravity():
     entries = cfg.get("entries", [])
     repo_path = str(REPO_SKILLS).replace("\\", "/")
     hub_path = str(HUB).replace("\\", "/")
-    # The repo's skills/ is listed too: agy does not follow directory junctions inside an entry
-    # (verified 2026-09-24: the junctioned ~/.skills/cli-bridge was not loaded, real folders were).
-    # keep foreign entries that still exist; drop ours and any path that no longer exists (a moved checkout)
+    # The repo's skills/ is listed too: agy does not follow directory junctions inside an entry.
     kept = [e for e in entries if e.get("path") not in (repo_path, "~/.skills", hub_path)
             and Path(os.path.expanduser(str(e.get("path", "")))).exists()]
     new_entries = kept + [{"path": hub_path}, {"path": repo_path}]
@@ -235,21 +214,17 @@ def _template(name):
 
 
 def _role_template(mdef):
-    """Template file of a model's role (models.json 'role'): fast-worker, balanced-worker, deep-worker."""
     return f"{mdef.get('role') or DEFAULT_ROLE}-worker"
 
 
 def _generic_variants(provider, generic):
-    """(agent name template, model, effort, template file) for every selectable model x every allowed
-    effort under the provider's generic agent template."""
-    from . import core  # local import: only needed here
+    from . import core
     for model, mdef in core.models_for(provider).items():
         for effort in mdef["levels"]:
             yield generic, model, effort, _role_template(mdef)
 
 
 def _tier_variants(tiers, generic):
-    """(agent name template, model, effort, template file) of the tier-specific agents."""
     specs = [s for s in tiers.values() if isinstance(s, dict) and s.get("agent") and s["agent"] != generic]
     for spec in specs:
         for effort in spec.get("efforts", []):
@@ -257,16 +232,8 @@ def _tier_variants(tiers, generic):
 
 
 def planned_agents():
-    """[(provider, name, model, effort, description, body)].
-
-    1) Every selectable model x every allowed effort level (models.json, 'ultra' already removed
-       by core.models_for) under the provider's agent_template - so whatever model + effort JEV
-       picks, a matching fixed agent/role exists.
-    2) Tier-specific agents whose template isn't the provider's generic one (e.g. test-worker-*),
-       for that tier's own effort range.
-    3) Antigravity: one agent per model tier (effort None) - see _antigravity_agents.
-    Body/description come from templates/agents/<role>-worker.md (the model's role in models.json;
-    a tier agent such as test-worker-{effort} uses test-worker.md)."""
+    """[(provider, name, model, effort, description, body)]: every selectable model x allowed effort,
+    so whatever JEV picks has a matching fixed agent, plus the tier-specific agents (test-worker-*)."""
     targets = json.loads((PKG / "config" / "targets.json").read_text(encoding="utf-8"))
     out = _antigravity_agents(targets) if "antigravity" in PROVIDERS else []
     seen = set()
@@ -287,10 +254,8 @@ def planned_agents():
 
 
 def _antigravity_agents(targets):
-    """[(provider, name, tier, None, description, body)]: one agent per model tier. An Antigravity agent
-    pins only a tier (flash / pro, models.json 'agent_tier'), never an effort, so the name carries the
-    tier (targets.json antigravity.agent_template) and the first selectable model of a tier defines it."""
-    from . import core  # local import: only needed here
+    """One agent per model tier: an Antigravity agent pins only a tier, never an effort."""
+    from . import core
     agent_tpl = targets.get("antigravity", {}).get("agent_template")
     if not agent_tpl:
         return []
@@ -316,14 +281,13 @@ def _write_if_changed(path, content):
 
 
 def _remove_stale(folder, pattern, want, label, name_of=lambda f: f.stem, remove=lambda f: f.unlink()):
-    """Removes the generated files in `folder` that are no longer planned (never a hand-written one)."""
+    """Removes generated files that are no longer planned, never a hand-written one."""
     for f in folder.glob(pattern) if folder.is_dir() else []:
         if name_of(f) not in want and GEN_MARK in f.read_text(encoding="utf-8", errors="replace"):
             act(f"remove stale generated {label} {f}", lambda f=f: remove(f))
 
 
 def _remove_agent_folder(agent_md):
-    """An Antigravity agent: its agent.md, then the folder - only when nothing else is left in it."""
     agent_md.unlink()
     if not any(agent_md.parent.iterdir()):
         agent_md.parent.rmdir()
@@ -339,8 +303,7 @@ def cmd_agents():
 
 
 def _write_antigravity_agents(plan):
-    """Antigravity: <name>/agent.md per model tier, as a subagent only - selected as the main agent
-    (`agy --agent`), agy keeps the session's model. The system prompt sits under an H1 heading."""
+    """Subagents only: selected as the main agent (`agy --agent`), agy keeps the session's model."""
     for _, name, tier, _, desc, body in plan:
         _write_if_changed(AGY_AGENTS / name / "agent.md",
                           f"---\nname: {name}\ndescription: {json.dumps(desc)}\nmodel: {tier}\nsubagent: true\n"
@@ -350,7 +313,6 @@ def _write_antigravity_agents(plan):
 
 
 def _write_claude_agents(plan):
-    """Claude: one .md per variant."""
     for _, name, model, effort, desc, body in plan:
         _write_if_changed(CLAUDE_AGENTS / f"{name}.md",
                           f"---\nname: {name}\ndescription: {desc}\nmodel: {model}\neffort: {effort}\n# {GEN_MARK}\n---\n{body}\n")
@@ -359,7 +321,6 @@ def _write_claude_agents(plan):
 
 
 def _write_codex_agents(plan):
-    """Codex: role file per variant + one managed block in config.toml."""
     block = [TOML_BEGIN]
     for _, name, model, effort, desc, body in plan:
         path = CODEX_AGENTS / f"{name}.toml"
@@ -378,7 +339,6 @@ def _write_codex_agents(plan):
 
 
 def _with_agents_block(cfg, new_block):
-    """config.toml text with our generated [agents.*] block replaced, or appended when missing."""
     # match the marker by its stable prefix: older versions wrote a different hint after it
     pattern = re.compile(r"# >>> jev-router agents[^\n]*\n.*?" + re.escape(TOML_END) + r"\n?", re.S)
     old = pattern.search(cfg)
@@ -402,7 +362,6 @@ def cmd_catalog():
 
 
 def _check_skill_folder(base):
-    """Reports broken links and folders without a SKILL.md; returns the number of broken links."""
     problems = 0
     for p in base.iterdir():
         if p.name in APP_MANAGED or p.is_file():

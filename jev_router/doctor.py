@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only health report: installed tools and logins, hooks, MCP registrations, skill hub, agents,
-configuration, remote access and recent router activity. Changes nothing (on Windows the real
-autostart entry is read through a short-lived scheduled task).   Usage: python install.py doctor
-"""
+"""Read-only health report (`python install.py doctor`)."""
 import json
 import os
 import re
@@ -30,8 +27,7 @@ def has_hook(cfg, event):
 
 
 def interpreters(claude_settings, codex_toml):
-    """(label, interpreter path) of every registered hook / MCP command. The paths point at one
-    Python installation; an update that removes it silently stops every hook."""
+    """A Python update that removes the registered interpreter silently stops every hook."""
     found = []
     hook = next((h.get("command", "") for g in (claude_settings or {}).get("hooks", {}).get("UserPromptSubmit", [])
                  for h in g.get("hooks", []) if "jev-router" in h.get("command", "")), "")
@@ -56,7 +52,6 @@ def report_tools():
 
 
 def report_hooks():
-    """Returns Claude's settings.json (the interpreter check reads its hook command)."""
     print("\n== Router hooks")
     line((STATE / "bin" / "run_hook.py").is_file(), "hook shim", "~/.jev-router/bin/run_hook.py")
     cs, cx = jload(P.PATHS["claude_settings"]), jload(P.PATHS["codex_hooks"])
@@ -68,7 +63,6 @@ def report_hooks():
 
 
 def report_mcp():
-    """Returns Codex's config.toml text ('' when missing)."""
     print("\n== MCP router (hook-less modes)")
     ok = "jev-router" in json.dumps(jload(P.claude_desktop_config()) or {})
     line(ok, "Claude desktop (Chat/Cowork)", "" if ok else "missing - the app rewrites its config from memory: "
@@ -103,7 +97,6 @@ def report_skills(cfg_toml):
 
 
 def report_config():
-    """Returns ~/.jev-router/config.json ({} when missing)."""
     print("\n== Configuration (~/.jev-router/config.json)")
     cfg = jload(STATE / "config.json") or {}
     jev = os.environ.get("TYPESAFE_API_KEY") or cfg.get("typesafe_api_key")
@@ -130,7 +123,6 @@ def report_remote(cfg):
 
 
 def last_prompts(log):
-    """{provider: timestamp of its newest routed prompt} from the last 500 log lines."""
     last = {}
     if not log.exists():
         return last

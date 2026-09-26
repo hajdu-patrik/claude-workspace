@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
-"""Checks the model policy in jev_router/config/models.json against every place a model or effort is named.
-Standard library only.
-
-  - Claude: .claude/settings.json "model", jev_router/templates/agents/*.md "model:", every Claude tier model in
-    jev_router/config/targets.json: generic alias of an allowed family, never haiku, never a pinned/dated ID.
-  - Every provider: each tier model exists in models.json (for Claude's cli:* tiers: in that
-    other provider's list), each tier effort is supported by that model, and no excluded effort
-    (policy.excluded_efforts, 'ultra') appears in any tier.
-  - Every selectable model's role has a worker template; an agent_tier is one Antigravity accepts.
-Runs as part of the test suite: python -m pytest tests -q
-"""
+"""The model policy (config/models.json) against every place a model or effort is named: Claude only
+via generic aliases, never Haiku or a dated ID, every tier effort supported by its model, never an
+excluded effort."""
 import json
 import re
 from pathlib import Path
@@ -78,7 +70,6 @@ AGY_AGENT_TIERS = {"inherit", "flash", "pro", "flash_lite"}  # the only values a
 
 
 def role_errors(provider, selectable):
-    """Every selectable model has a role with a worker template; an Antigravity agent_tier is one agy accepts."""
     errors = []
     for m in selectable:
         where = f"models.json {provider}.{m['id']}"

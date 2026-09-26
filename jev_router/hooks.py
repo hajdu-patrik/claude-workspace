@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
-"""Shared "before prompt" hook entry point for Claude Code / Codex CLI / Antigravity CLI.
+"""Shared "before prompt" hook for Claude Code, Codex CLI and Antigravity CLI. Always exits 0.
 
-Claude Code and Codex CLI: UserPromptSubmit, stdin JSON with a "prompt" field, stdout
-{"hookSpecificOutput": {"hookEventName": ..., "additionalContext": ...}}.
+Antigravity has no prompt-submit event, only PreInvocation, which fires before every model call of a
+turn and carries no prompt text. So the latest user input is read back from the transcript, and the
+context is injected only once per user turn.
 
-Antigravity CLI: there is no prompt-submit event, only PreInvocation, which (1) fires before
-EVERY model call of a turn, (2) carries no prompt text - only metadata incl. transcriptPath and
-conversationId - and (3) wants {"injectSteps": [{"ephemeralMessage": ...}]}. So for Antigravity
-the latest USER_INPUT line is read back from the transcript (format verified against a real run,
-see models.json) and the context is injected only once per user turn (tracked per
-conversationId + step_index in ~/.jev-router/state/).
-
-Usage (installed globally by the installer via the shim ~/.jev-router/bin/run_hook.py):
-    python -m jev_router.hooks claude      UserPromptSubmit | Stop
-    python -m jev_router.hooks codex       UserPromptSubmit | Stop
-    python -m jev_router.hooks antigravity PreInvocation | Stop
-    python -m jev_router.hooks claude      UserPromptSubmit --cloud-only   # project hook, cloud sandboxes only
-
-Exit code: always 0 - the router never blocks a prompt.
+    python -m jev_router.hooks claude|codex UserPromptSubmit|Stop [--cloud-only]
+    python -m jev_router.hooks antigravity  PreInvocation|Stop
 """
 import hashlib
 import json
@@ -53,16 +42,14 @@ def log(entry):
 
 
 def _user_request(content):
-    """The text between <USER_REQUEST> and </USER_REQUEST> (Antigravity wraps the typed prompt in
-    them, followed by metadata); the whole content when the tags are missing."""
+    """Antigravity wraps the typed prompt in <USER_REQUEST> tags, followed by metadata."""
     _, opened, rest = content.partition("<USER_REQUEST>")
     body, closed, _ = rest.partition("</USER_REQUEST>")
     return body if opened and closed else content
 
 
 def _antigravity_prompt(payload):
-    """(prompt, turn_key) of the latest user turn in the transcript, or (None, None).
-    Never raises: a missing/odd transcript just means the hook does nothing this call."""
+    """(prompt, turn_key) of the latest user turn in the transcript, or (None, None)."""
     try:
         path = payload.get("transcriptPath")
         if not path:
@@ -84,7 +71,6 @@ def _antigravity_prompt(payload):
 
 
 def _first_time(turn_key):
-    """True only for the first PreInvocation of a given user turn (persisted, small LRU)."""
     try:
         seen = json.loads(SEEN_FILE.read_text(encoding="utf-8")) if SEEN_FILE.exists() else []
     except (OSError, ValueError):
@@ -101,10 +87,10 @@ def _first_time(turn_key):
 
 
 def extract_prompt(raw, provider):
-    """Returns (prompt_text_or_None, payload_dict_or_None, turn_key_or_None)."""
+    """(prompt, payload, turn_key), each possibly None."""
     try:
-        payload = json.loads(raw.decode("utf-8-sig"))  # utf-8-sig: PowerShell 5.1 pipes can prepend a BOM
-    except (ValueError, AttributeError):  # ValueError includes UnicodeDecodeError and JSONDecodeError
+        payload = json.loads(raw.decode("utf-8-sig"))  # PowerShell 5.1 pipes can prepend a BOM
+    except (ValueError, AttributeError):
         return None, None, None
     if not isinstance(payload, dict):
         return None, None, None
@@ -116,7 +102,7 @@ def extract_prompt(raw, provider):
 
 
 def emit(text, hook_event_name, provider):
-    # ASCII-escaped JSON (json.dumps default): safe for any console code page
+    # ASCII-escaped JSON is safe for any console code page
     if provider == "antigravity":
         print(json.dumps({"injectSteps": [{"ephemeralMessage": text}]}))
     else:
@@ -127,21 +113,18 @@ def _json_object(raw):
     try:
         payload = json.loads(raw.decode("utf-8-sig"))
         return payload if isinstance(payload, dict) else {}
-    except (ValueError, AttributeError):  # ValueError includes UnicodeDecodeError and JSONDecodeError
+    except (ValueError, AttributeError):
         return {}
 
 
 def _session_id(payload):
-    """Claude/Codex: session_id; Antigravity: conversationId."""
     if not payload:
         return None
     return payload.get("session_id") or payload.get("sessionId") or payload.get("conversationId")
 
 
 def _transcript_mtime(payload):
-    """When the session last wrote its transcript (Claude/Codex: transcript_path, Antigravity:
-    transcriptPath) - None if unknown. The current prompt is usually not yet written when the
-    hook runs, so this reflects the previous turn's last activity."""
+    """The previous turn's last activity: the current prompt is usually not written yet."""
     path = (payload or {}).get("transcript_path") or (payload or {}).get("transcriptPath")
     try:
         return Path(path).stat().st_mtime if path else None
@@ -150,16 +133,14 @@ def _transcript_mtime(payload):
 
 
 def on_stop(provider, raw):
-    """The agent finished its turn: release its queue entries."""
     payload = _json_object(raw)
     if payload.get("fullyIdle") is not False:  # Antigravity: background work may still run
         queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
     if provider == "antigravity":
-        print("{}")  # Antigravity expects a JSON object; no "decision" means "allow the stop"
+        print("{}")  # Antigravity expects a JSON object; no "decision" allows the stop
 
 
 def on_prompt(provider, hook_event_name, raw):
-    """A submitted prompt: register it for the queue protection, route it and inject the context."""
     prompt, payload, turn_key = extract_prompt(raw, provider)
     if prompt is None:
         if payload is None:
@@ -168,7 +149,7 @@ def on_prompt(provider, hook_event_name, raw):
         return
     low = prompt.lstrip().lower()
     if len(prompt) < 3 or low.startswith(("/",) + SYSTEM_PREFIXES):
-        return  # a command or a harness message, not a user request
+        return
     if provider == "antigravity" and turn_key and not _first_time(turn_key):
         return  # same user turn, later model call
 
@@ -179,18 +160,18 @@ def on_prompt(provider, hook_event_name, raw):
         last_activity=_transcript_mtime(payload)))
     if not private:
         emit(route_and_log(prompt, provider, payload, cwd, queue_text), hook_event_name, provider)
-    elif queue_text:  # #norouter / #privat: no routing, never sent to TypeSafe - only the queue protection
+    elif queue_text:  # #norouter / #privat: never sent to TypeSafe, only queue-protected
         emit(queue_text, hook_event_name, provider)
 
 
 def route_and_log(prompt, provider, payload, cwd, queue_text):
-    """The context to inject for a prompt; the decision is logged (redacted). Never raises."""
+    """Never raises; the decision is logged redacted."""
     t0 = time.perf_counter()
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "cwd": cwd,
              "sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
              "prompt": redact(prompt if os.environ.get("ROUTER_LOG_PROMPTS") == "1" else prompt[:200])}
     try:
-        # Codex reports the session's active model in the hook payload: lets a tier stay in-session
+        # Codex reports the session's model, so a tier can stay in-session
         session_model = payload.get("model") if provider == "codex" and isinstance(payload.get("model"), str) else None
         d, text, _, error = core.route(prompt, provider, session_model=session_model)
         if error:
@@ -214,13 +195,13 @@ def route_and_log(prompt, provider, payload, cwd, queue_text):
 
 
 def main(argv=None):
-    """Exit code: always 0 - the router never blocks a prompt."""
+    """Always 0: the router never blocks a prompt."""
     args = list(sys.argv[1:] if argv is None else argv)
     cloud_only = "--cloud-only" in args
     args = [a for a in args if a != "--cloud-only"]
     if len(args) != 2:
         print("Usage: python -m jev_router.hooks <claude|codex|antigravity> <hook_event_name> [--cloud-only]", file=sys.stderr)
-    elif not cloud_only or core.is_cloud():  # locally the global (user-level) hook already runs - avoid double injection
+    elif not cloud_only or core.is_cloud():  # locally the global hook already runs
         provider, hook_event_name = args
         raw = sys.stdin.buffer.read()
         if hook_event_name == "Stop":

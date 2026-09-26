@@ -6,10 +6,7 @@ Usage:  python ask_cli.py codex       [--model M] [--effort E] < prompt.txt
 Exit codes: 0 success, 2 bad usage / not installed / cloud sandbox, 3 timeout,
             anything else: the tool's own exit code.
 
-Codex reads the prompt from stdin (`codex exec -`, read-only sandbox by default). Antigravity's
-`agy -p` takes the prompt as an argument (verified 2026-09-23 with agy 1.2.9); it runs in plan
-mode here so it cannot edit files. `agy` is looked up on PATH first, then at its installer
-location - a freshly installed agy is only on PATH in new terminals.
+Codex runs in its read-only sandbox, Antigravity in plan mode, so neither can edit files.
 """
 import argparse
 import os
@@ -67,7 +64,7 @@ def main():
         return 2
     argv, stdin = build(a.tool, exe, a.model, a.effort, prompt)
     env = os.environ.copy()
-    env["JEV_ROUTER_NESTED"] = "1"  # informational: this call was made by another agent
+    env["JEV_ROUTER_NESTED"] = "1"
     try:
         r = subprocess.run(argv, input=stdin, capture_output=True, timeout=TIMEOUT_S + 30, env=env,
                            stdin=None if stdin is not None else subprocess.DEVNULL)

@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-"""Installs (or removes) the router's hooks and MCP server for Claude Code, Codex and Antigravity.
+"""Installs or removes the router's hooks and MCP server for Claude Code, Codex and Antigravity.
 
-Driven by the installer (`python install.py`).
+Every entry calls a shim in ~/.jev-router/bin/, so moving the repository only requires re-running
+the installer. A changed file's original is kept once as `<file>.bak`; a config file that is not
+valid JSON is reported and left untouched.
 
-Every hook / MCP entry calls a small shim in ~/.jev-router/bin/ that runs the real script from this
-repository, so moving the repository only requires re-running the installer. A third shim,
-bin/route.py, runs the `route` command for other programs (`python ~/.jev-router/bin/route.py
---json "<text>"`) without them knowing where the repository lives. The first time a file
-is changed its original is kept as `<file>.bak` (never overwritten later). Idempotent: a second run
-changes nothing. Entries of other tools are preserved; a config file that is not valid JSON is
-reported and left untouched.
-
-Hooks per provider:
-    claude       UserPromptSubmit + Stop          (~/.claude/settings.json)
-    codex        UserPromptSubmit + Stop          (~/.codex/hooks.json)  - trust once via `codex` -> /hooks
-    antigravity  PreInvocation + Stop             (~/.gemini/config/hooks.json)
-MCP server "jev-router": Claude desktop (Chat/Cowork), Codex (config.toml), Antigravity (mcp_config.json).
+    claude       UserPromptSubmit + Stop    ~/.claude/settings.json
+    codex        UserPromptSubmit + Stop    ~/.codex/hooks.json (trust once via /hooks)
+    antigravity  PreInvocation + Stop       ~/.gemini/config/hooks.json
 """
 import json
 import re
@@ -24,7 +16,7 @@ from pathlib import Path
 
 from . import platforms as P
 
-REPO = Path(__file__).resolve().parent.parent  # the folder that contains the jev_router package
+REPO = Path(__file__).resolve().parent.parent
 BIN = P.HOME / ".jev-router" / "bin"
 SHIM_HOOK, SHIM_MCP, SHIM_ROUTE = BIN / "run_hook.py", BIN / "mcp_server.py", BIN / "route.py"
 ALL = ("claude", "codex", "antigravity")
@@ -36,8 +28,7 @@ sys.path.insert(0, r"{repo}")
 
 
 def shim(module, command=None):
-    """Shim source that runs `module` from this repository; `command` becomes its first argument
-    (bin/route.py = `python -m jev_router route ...`). Without a command the text is unchanged."""
+    """Shim source that runs `module` from this repository; `command` becomes its first argument."""
     argv = f'sys.argv[1:1] = ["{command}"]\n' if command else ""
     target = f"{module} {command}" if command else module
     return SHIM_TEMPLATE.format(target=target, repo=REPO, module=module, argv=argv)
@@ -59,7 +50,7 @@ class Writer:
         if self.apply:
             path.parent.mkdir(parents=True, exist_ok=True)
             bak = path.with_name(path.name + ".bak")
-            if old is not None and not bak.exists():  # keep the ORIGINAL, pre-jev-router version
+            if old is not None and not bak.exists():  # keep the original, pre-jev-router version
                 bak.write_text(old, encoding="utf-8")
             path.write_text(content, encoding="utf-8")
 
@@ -92,8 +83,6 @@ def is_router_cmd(cmd):
 
 
 def hook_cmd(provider, event):
-    # both words are shell-safe: quoted on POSIX, space-free short paths on Windows (Antigravity
-    # runs hooks through `cmd /c`, which mangles quoted paths)
     return f"{P.python_cmd()} {P.shell_arg(SHIM_HOOK)} {provider} {event}"
 
 
@@ -127,7 +116,6 @@ AGY_EVENTS = ("PreToolUse", "PostToolUse", "PreInvocation", "PostInvocation", "S
 
 
 def _strip_router_events(spec):
-    """Removes our commands from one Antigravity hook group (in place)."""
     for event in ("PreInvocation", "Stop"):
         if event in spec:
             spec[event] = [h for h in spec[event] if not is_router_cmd(h.get("command"))]
@@ -140,7 +128,6 @@ def antigravity_hooks(path, w, uninstall=False):
     for spec in cfg.values():
         if isinstance(spec, dict):
             _strip_router_events(spec)
-    # a hook group left without any event is dropped
     cfg = {name: spec for name, spec in cfg.items()
            if not isinstance(spec, dict) or any(k in spec for k in AGY_EVENTS)}
     if not uninstall:
@@ -155,21 +142,20 @@ def json_mcp(path, label, w, uninstall=False):
     if uninstall:
         servers.pop("jev-router", None)
     else:
-        # MCP clients exec "command" directly (no shell): the plain interpreter path, never shell-quoted
+        # MCP clients exec "command" directly, without a shell: never shell-quoted
         servers["jev-router"] = {"command": fwd(P.python_exe_windowless()), "args": [fwd(SHIM_MCP)]}
     w.write(path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", label)
 
 
 def codex_mcp(path, w, uninstall=False):
     text = Path(path).read_text(encoding="utf-8") if Path(path).exists() else ""
-    # the section ends at the next table OR comment line (our generated agents block starts with one);
-    # each repetition consumes exactly one line: a blank one, or one not starting with [ or #
+    # the section ends at the next table or comment line (our generated agents block starts with one)
     pat = re.compile(r"\[mcp_servers\.jev-router\]\n(?:\n|[^\[#\n].*(?:\n|\Z))*")
     block = f'[mcp_servers.jev-router]\ncommand = {json.dumps(fwd(P.python_exe_windowless()))}\nargs = [{json.dumps(fwd(SHIM_MCP))}]\n\n'
     m = pat.search(text)
     if uninstall:
         new = (text[:m.start()] + text[m.end():]) if m else text
-    elif m:  # replace in place - other generated blocks may follow it
+    elif m:  # in place: other generated blocks may follow it
         new = text[:m.start()] + block + text[m.end():]
     else:
         new = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
@@ -177,8 +163,7 @@ def codex_mcp(path, w, uninstall=False):
 
 
 def claude_desktop_mcp(w, uninstall=False):
-    """The Claude desktop app keeps its config in memory and rewrites the file from it: a change made
-    while the app runs is lost at its next save unless the app is restarted first."""
+    """The desktop app rewrites the file from memory: a change made while it runs is lost."""
     before = w.changes
     json_mcp(P.claude_desktop_config(), "claude desktop MCP (Chat/Cowork)", w, uninstall)
     if w.changes > before and P.app_running("Claude"):
@@ -187,14 +172,13 @@ def claude_desktop_mcp(w, uninstall=False):
 
 
 def install_shims(w):
-    """Writes the ~/.jev-router/bin shims and nothing else (dry run and .bak handling: Writer)."""
     w.write(SHIM_HOOK, shim("jev_router.hooks"), "hook shim")
     w.write(SHIM_MCP, shim("jev_router.mcp_server"), "MCP shim")
     w.write(SHIM_ROUTE, shim("jev_router", "route"), "route shim")
 
 
 def install(providers=ALL, apply=False, uninstall=False):
-    """Returns the number of files that changed (or would change)."""
+    """Number of files that changed (or would change)."""
     w = Writer(apply)
     if not uninstall:
         install_shims(w)

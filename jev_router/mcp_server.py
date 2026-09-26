@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
-"""MCP (stdio) server exposing the router to modes that run no hooks: Claude desktop Chat and
-Cowork, and as an extra tool in Codex / Antigravity. Standard library only (newline-delimited
-JSON-RPC 2.0 over stdin/stdout, the MCP stdio transport).
+"""MCP stdio server for modes that run no hooks (Claude desktop Chat and Cowork).
 
-Tools:
-  route_prompt(prompt, provider="claude-chat")  -> the same decision the hooks inject, plus the
-                                                   chosen skill's SKILL.md inline
-  list_skills(query="", limit=20)                -> skills from the shared catalog (~/.skills)
-  get_skill(name)                                -> one skill's SKILL.md (works cross-tool, and in
-                                                   Cowork's VM where local paths are not readable)
-
-Registered by the installer via the shim ~/.jev-router/bin/mcp_server.py. A hook is
-automatic; an MCP tool is only called if the model decides to - the Claude "Personal
-preferences" line in README.md asks it to call route_prompt first.
+get_skill returns a SKILL.md inline because Cowork's VM cannot read local paths.
 """
 import json
 import sys
@@ -88,10 +77,9 @@ HANDLERS = {"route_prompt": tool_route_prompt, "list_skills": tool_list_skills, 
 
 
 def handle(msg):
-    """One JSON-RPC message -> response dict, or None for notifications."""
     method, mid, params = msg.get("method"), msg.get("id"), msg.get("params") or {}
     if mid is None:
-        return None  # notification (e.g. notifications/initialized)
+        return None  # notification
     if method == "initialize":
         result = {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                   "capabilities": {"tools": {"listChanged": False}},
@@ -107,7 +95,7 @@ def handle(msg):
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": f"unknown tool {params.get('name')}"}}
         try:
             text, is_error = fn(params.get("arguments") or {})
-        except Exception as exc:  # noqa: BLE001 - reported to the client; the server never crashes
+        except Exception as exc:  # noqa: BLE001 - reported to the client, the server never crashes
             text, is_error = f"{type(exc).__name__}: {exc}", True
         result = {"content": [{"type": "text", "text": text}], "isError": is_error}
     else:
@@ -116,7 +104,6 @@ def handle(msg):
 
 
 def respond(line):
-    """The reply to one input line: a response dict, a list for a batch, or None / [] for nothing."""
     try:
         msg = json.loads(line)
     except ValueError:

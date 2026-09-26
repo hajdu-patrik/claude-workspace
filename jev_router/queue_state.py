@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
 """Queue protection: a new prompt must never stop, restart or overwrite work still in progress.
 
-All three tools already queue messages typed while the agent is busy (Claude Code, Codex and
-Antigravity's "Queued Messages: Queue" default). What they don't do is tell the model that the new
-message arrived while earlier work is unfinished - so a model may abandon or redo it. This module
-tracks work in flight and turns it into explicit context:
-
-  UserPromptSubmit (Antigravity: first PreInvocation of a turn) -> on_submit(): register the request;
-      if the same session still has unfinished requests -> "QUEUE: ... finish it first"
-      if ANOTHER session is working in the same folder     -> "CONCURRENCY: ... don't touch its files"
-  Stop (all three tools)                                     -> on_stop(): the session is idle again.
-
-State lives in ~/.jev-router/state/inflight.json, guarded by a lock file. An entry is ignored when
-it is older than ROUTER_QUEUE_TTL_MIN (default 120), or when the session's transcript has not been
-written for ROUTER_QUEUE_IDLE_MIN (default 10) - a turn the user cancelled (Claude runs no Stop hook
-on Esc) or a crashed session must never make the next prompt resume old work.
+The tools queue messages typed while the agent is busy, but never tell the model that earlier work is
+unfinished. This module tracks work in flight and adds QUEUE: / CONCURRENCY: context. Entries expire
+after a TTL, or when the session's transcript goes quiet: Claude runs no Stop hook on Esc, and a
+cancelled or crashed turn must never make the next prompt resume old work.
 """
 import json
 import os
@@ -39,7 +29,7 @@ def _paths(state_dir):
 
 
 class _Lock:
-    """Cross-platform lock via O_EXCL lock file; a lock older than 10 s is considered abandoned."""
+    """O_EXCL lock file; one older than 10 s is considered abandoned."""
 
     def __init__(self, path):
         self.path = path
@@ -74,7 +64,6 @@ class _Lock:
 
 
 def _save(path, data):
-    """Atomic write: readers never see a half-written file."""
     tmp = path.with_suffix(".tmp")
     try:
         tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -92,16 +81,13 @@ def _load(path):
 
 
 def _prune(data, now):
-    """The entries younger than TTL_S; a session left without any is dropped."""
     fresh = {key: [e for e in entries if now - e.get("ts", 0) < TTL_S] for key, entries in data.items()}
     return {key: entries for key, entries in fresh.items() if entries}
 
 
 def on_submit(state_dir, provider, session_id, cwd, summary, last_activity=None):
-    """Register a new request. Returns {"ahead": [entries still running in this session],
-    "others": [entries of OTHER sessions working in the same folder]}.
-    last_activity: mtime of the session's transcript - if the session has been silent for
-    IDLE_S, its earlier entries belong to a cancelled or crashed turn and are dropped."""
+    """{"ahead": unfinished entries of this session, "others": other sessions in the same folder}.
+    last_activity: the transcript's mtime; a session silent for IDLE_S had its turn cancelled."""
     if not session_id:
         return {"ahead": [], "others": []}
     path, lock = _paths(state_dir)
@@ -120,7 +106,6 @@ def on_submit(state_dir, provider, session_id, cwd, summary, last_activity=None)
 
 
 def on_stop(state_dir, provider, session_id):
-    """The session finished its turn: nothing of it is running any more."""
     if not session_id:
         return
     path, lock = _paths(state_dir)
@@ -131,7 +116,6 @@ def on_stop(state_dir, provider, session_id):
 
 
 def render(info):
-    """Context lines for the model ('' when there is nothing to protect)."""
     parts = []
     if info.get("ahead"):
         first = info["ahead"][0].get("summary") or "an earlier request"

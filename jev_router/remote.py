@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
-"""Optional remote-access module: reach this computer from a phone or another device through each
-tool's own remote feature, started automatically at logon, under ONE machine name.
+"""Remote access from a phone or another device through each tool's own remote feature, started at
+logon under one machine name.
 
-    python install.py remote --name "My Workstation"     # set up (name defaults to the hostname)
-    python install.py remote --remove                    # undo
+  Claude       `claude remote-control` (Windows: scheduled task, macOS: launchd, Linux: systemd --user)
+  Antigravity  `agy remote-control start` (registers its own autostart)
+  Codex        macOS/Linux: `codex remote-control start`. Windows: `codex app-server --remote-control`
+               in a scheduled task, because every process there runs inside a Job Object without
+               breakaway permission, so the `start` daemon cannot detach.
 
-What it sets up (only for tools that are installed):
-  Claude       `claude remote-control --name <name>` kept running at logon
-               (Windows: scheduled task, macOS: launchd agent, Linux: systemd --user service)
-  Antigravity  `agy remote-control start --name <name> --session` (the CLI registers its own autostart;
-               on Windows it is wrapped so it starts without a window)
-  Codex        macOS/Linux: `codex remote-control start` (pair with `codex remote-control pair`);
-               Windows: `codex app-server --remote-control --listen off` kept running at logon by a
-               scheduled task - the `start` daemon cannot detach there, as every process (Explorer
-               included) runs inside a Job Object without breakaway permission.
-On Windows nothing opens a window: console programs run under `conhost.exe --headless`. The desktop
-apps are not started; opened by hand they work as usual. The machine name is stored in
-~/.jev-router/config.json, never in the repository.
-The computer must be on, awake and logged in for any of this to be reachable.
+On Windows console programs run under `conhost.exe --headless`, so nothing opens a window.
 """
 import base64
 import json
@@ -56,24 +47,21 @@ def _ps(script):
 
 
 def _conhost():
-    """`conhost.exe --headless <program>` runs a console program in a console that is never shown -
-    not even handed to Windows Terminal, the default terminal on Windows 11 (a plain `cmd.exe` task
-    or Run entry opens a terminal window at every logon)."""
+    """A console that is never shown, not even handed to Windows Terminal (a plain `cmd.exe` task
+    opens a terminal window at every logon)."""
     return str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "conhost.exe")
 
 
 def _hidden_ps(script):
-    """(execute, arguments) for a scheduled task that runs a PowerShell script without a window."""
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     return _conhost(), f"--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}"
 
 
 def _run_once(script, wait_s=30):
-    """Run a PowerShell script through the Task Scheduler; returns the last line it outputs ("" if it
-    did not finish in `wait_s`). Needed for HKCU: a terminal inside a packaged (MSIX) app - e.g. the
-    Claude desktop app - and every process started from it only see the app's private copy of HKCU,
-    so a Run entry written there never takes effect at logon. Scheduled tasks run outside it.
-    The result goes through a file: conhost does not pass the exit code on."""
+    """Last output line of a PowerShell script run by the Task Scheduler ("" on timeout). Needed for
+    HKCU: a process inside a packaged (MSIX) app, such as the Claude desktop app, only sees a private
+    copy of HKCU, so a Run entry written from there never takes effect. The result goes through a
+    file because conhost does not pass the exit code on."""
     result = STATE / "state" / "setup-task.txt"
     result.parent.mkdir(parents=True, exist_ok=True)
     result.unlink(missing_ok=True)
@@ -94,26 +82,22 @@ def _run_once(script, wait_s=30):
 
 
 def _psq(value):
-    """A single-quoted PowerShell string literal."""
     return "'" + str(value).replace("'", "''") + "'"
 
 
-# Shared by setup and the watchdog: make the Antigravity autostart entry start without a window.
-# `agy remote-control start` registers `agy.exe remote-control serve` under HKCU\...\Run - a console
-# program, so every logon opened a terminal window; `conhost.exe --headless` in front of it hides it.
+# agy registers a console program under HKCU\...\Run, which opened a terminal window at every logon.
 _PS_WRAP_AGY = (f"$k = {_psq(RUN_KEY)}; $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}; "
                 f"if ($v -and $v -notlike '*--headless*') {{ $v = '\"' + $conhost + '\" --headless ' + $v; "
                 f"Set-ItemProperty $k {AGY_RUN_VALUE} $v }}")
-# (Re)start the daemon exactly as at logon: from the wrapped entry, so it has a hidden console. A daemon
-# without a console makes Windows open a terminal window for every console program it runs (hooks, MCP).
+# Restart from the wrapped entry: a daemon without a console makes Windows open a terminal window
+# for every console program it runs (hooks, MCP).
 _PS_RESTART_AGY = ("Get-CimInstance Win32_Process -Filter \"Name='agy.exe'\" | "
                    "? { $_.CommandLine -match 'remote-control serve' } | % { Stop-Process -Id $_.ProcessId -Force }; "
                    "Start-Process -FilePath $conhost -ArgumentList ('--headless ' + ($v -replace '^\"[^\"]+\" --headless ', ''))")
 
 
 def _setup_agy_windows(agy, name):
-    """Register the Antigravity daemon, hide its autostart entry and restart it hidden - all in a
-    scheduled task, outside any MSIX container (see _run_once). Returns (ok, message)."""
+    """Runs in a scheduled task, outside any MSIX container (see _run_once)."""
     out = _run_once(
         f"$conhost = {_psq(_conhost())}; $agy = {_psq(agy)}; "
         "& $agy remote-control stop *> $null; "
@@ -128,9 +112,8 @@ def _setup_agy_windows(agy, name):
 
 
 def _watchdog_script():
-    """Runs at logon and every 30 minutes (task JevRouter-Watchdog): re-hides the Antigravity
-    autostart entry after an agy update rewrote it, restarts a daemon that is not running and
-    starts a remote task that is not running."""
+    """Runs at logon and every 30 minutes: an agy update rewrites the autostart entry, and a daemon
+    or remote task can stop."""
     return f"""# generated by jev-router's installer - keeps remote access running and windowless
 $ErrorActionPreference = 'SilentlyContinue'
 $conhost = {_psq(_conhost())}
@@ -155,9 +138,8 @@ def _setup_watchdog():
 
 
 def _win_loop(task, script_name, workdir, command, kill):
-    """Keep `command` (a cmd.exe line) running from logon: a restart-after-30-s loop script run by a
-    scheduled task under `conhost.exe --headless`. `kill` (PowerShell condition on $_) matches a
-    previous instance's processes - the scheduler ignores Start while the old loop still runs."""
+    """Keeps `command` running from logon in a restart loop. `kill` matches a previous instance's
+    processes: the scheduler ignores Start while the old loop still runs."""
     script = BIN / script_name
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(f'@echo off\ncd /d "{workdir}"\n:loop\n{command}\ntimeout /t 30 /nobreak >nul\ngoto loop\n',
@@ -181,8 +163,7 @@ def _win_task(name, execute, argument, workdir, repeat_min=None):
 
 
 def claude_trusts(folder):
-    """True if Claude Code's workspace-trust dialog was accepted for `folder` (~/.claude.json).
-    Remote Control refuses untrusted folders - and the home directory is never trusted."""
+    """Remote Control refuses untrusted folders, and the home directory is never trusted."""
     try:
         projects = json.loads((P.HOME / ".claude.json").read_text(encoding="utf-8")).get("projects", {})
     except (OSError, ValueError):
@@ -194,8 +175,7 @@ def claude_trusts(folder):
 
 
 def _launchd_plist(name, claude, workdir):
-    """launchd agent plist (bytes). plistlib escapes &, <, quotes in names and paths. PATH is copied
-    from this process so an npm/Homebrew/nvm `claude` (a `#!/usr/bin/env node` script) finds node."""
+    """PATH is copied from this process so an npm/Homebrew/nvm `claude` script finds node."""
     return plistlib.dumps({
         "Label": LAUNCHD_LABEL,
         "ProgramArguments": [str(claude), "remote-control", "--name", str(name)],
@@ -214,8 +194,7 @@ def _one_line(value):
 
 
 def _sd_quote(value, dollar=True):
-    """A double-quoted systemd argument: backslash and `"` backslash-escaped, `%` specifiers doubled and,
-    where the setting expands variables (ExecStart=), `$` doubled."""
+    """`$` is doubled only where the setting expands variables (ExecStart=)."""
     value = _one_line(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
     if dollar:
         value = value.replace("$", "$$")
@@ -223,8 +202,6 @@ def _sd_quote(value, dollar=True):
 
 
 def _systemd_unit(name, claude, workdir):
-    """systemd --user unit text with specifiers/quoting escaped. Description= and WorkingDirectory=
-    only expand `%` specifiers; Environment= does no `$` expansion, so `$` is left alone there."""
     path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     return f"""[Unit]
 Description=Claude Code Remote Control ({_one_line(name).replace("%", "%%")})
@@ -266,13 +243,12 @@ def _setup_claude(name, claude, workdir):
         SYSTEMD.write_text(_systemd_unit(name, claude, workdir), encoding="utf-8")
         P.run(["systemctl", "--user", "daemon-reload"])
         P.run(["systemctl", "--user", "enable", SYSTEMD.name])
-        # restart (not just start): a changed name/workdir must take effect on re-run
+        # restart, not start: a changed name or workdir must take effect on re-run
         code, out = P.run(["systemctl", "--user", "restart", SYSTEMD.name])
     return code == 0, out
 
 
 def _remote_claude(name, workdir):
-    """(tool, ok, message) for Claude Remote Control, None when Claude Code is not installed."""
     claude = P.find_exe("claude")
     if not claude:
         return None
@@ -284,7 +260,6 @@ def _remote_claude(name, workdir):
 
 
 def _remote_agy(name):
-    """(tool, ok, message) for the Antigravity daemon, None when agy is not installed."""
     agy = P.find_exe("agy")
     if not agy:
         return None
@@ -297,7 +272,6 @@ def _remote_agy(name):
 
 
 def _remote_codex(workdir):
-    """(tool, ok, message) for Codex remote control, None when Codex is not installed."""
     codex = P.find_exe("codex")
     if not codex:
         return None
@@ -315,8 +289,7 @@ def _remote_codex(workdir):
 
 
 def setup(name, providers, apply=True, workdir=None):
-    """Returns a list of (tool, ok, message) lines for the report. `workdir`: the folder remote
-    Claude sessions start in - it must be a folder Claude Code trusts (never the home directory)."""
+    """[(tool, ok, message)]. `workdir` must be a folder Claude Code trusts."""
     workdir = workdir or P.HOME
     if not apply:
         return [(p, True, f"would set up remote access as \"{name}\"") for p in providers]
@@ -328,7 +301,7 @@ def setup(name, providers, apply=True, workdir=None):
         report.append(_remote_agy(name))
     if "codex" in providers:
         report.append(_remote_codex(workdir))
-    report = [line for line in report if line]  # None: the tool is not installed
+    report = [line for line in report if line]
     if P.IS_WINDOWS and any(ok for _, ok, _ in report):
         code, out = _setup_watchdog()
         report.append(("watchdog", code == 0, "checks every 30 min and at logon that everything runs, windowless"
@@ -337,8 +310,7 @@ def setup(name, providers, apply=True, workdir=None):
 
 
 def codex_connection(minutes=30):
-    """(ok, detail) from the newest Codex remote-control status in ~/.codex/logs_*.sqlite (written by
-    both the CLI server and the ChatGPT app); None when there is no recent entry."""
+    """(ok, detail) from the newest remote-control status in Codex's logs, or None."""
     import sqlite3
     dbs = sorted((P.HOME / ".codex").glob("logs_*.sqlite"), key=lambda p: p.stat().st_mtime)
     if not dbs:
@@ -362,8 +334,7 @@ def codex_connection(minutes=30):
 
 
 def status():
-    """Read-only (tool, ok, detail) lines for `doctor`. On Windows the real autostart entry is read
-    through a short-lived scheduled task (a terminal inside a packaged app only sees a private copy)."""
+    """Read-only (tool, ok, detail) lines for `doctor`."""
     if not P.IS_WINDOWS:
         service = LAUNCHD if P.IS_MAC else SYSTEMD
         return [("claude", service.exists(), str(service) if service.exists() else "not set up")]
@@ -382,7 +353,6 @@ def status():
 
 
 def _server_status(tasks, procs):
-    """Claude / Codex: the scheduled task's state and whether its server process runs."""
     lines = []
     for tool, task, marker in (("claude", TASK_CLAUDE, " remote-control --name"), ("codex", TASK_CODEX, "app-server --remote-control")):
         if task in tasks:
@@ -393,7 +363,6 @@ def _server_status(tasks, procs):
 
 
 def _codex_status():
-    """Whether this Codex version still accepts the flags the task uses, and the remote connection."""
     codex = P.find_exe("codex")
     flag = codex and P.run([codex, "app-server", "--remote-control", "--listen", "off", "--help"], timeout=60)[0] == 0
     conn = codex_connection()
@@ -410,7 +379,6 @@ def _autostart_state(entry):
 
 
 def _agy_status(procs):
-    """The Antigravity daemon and its autostart entry (read outside any MSIX container)."""
     entry = _run_once(f"(Get-ItemProperty {_psq(RUN_KEY)} -ErrorAction SilentlyContinue).{AGY_RUN_VALUE}")
     serve = "remote-control serve" in procs
     return ("antigravity", bool(entry) and "--headless" in entry and serve,
@@ -429,7 +397,7 @@ def remove():
             '| % { Stop-Process -Id $_.ProcessId -Force }')
         report.append(("claude/codex", True, "scheduled tasks removed, servers stopped"))
     elif P.IS_MAC and LAUNCHD.exists():
-        P.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"])  # ignore failure: may not be loaded
+        P.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"])  # fails when not loaded
         LAUNCHD.unlink()
         report.append(("claude", True, "launchd agent removed"))
     elif SYSTEMD.exists():
@@ -438,7 +406,7 @@ def remove():
         P.run(["systemctl", "--user", "daemon-reload"])
         report.append(("claude", True, "systemd user service removed"))
     if agy := P.find_exe("agy"):
-        if P.IS_WINDOWS:  # outside any MSIX container, so the real autostart entry is removed
+        if P.IS_WINDOWS:
             _run_once(f"& {_psq(agy)} remote-control stop *> $null; 'ok'", wait_s=60)
         else:
             P.run([agy, "remote-control", "stop"], timeout=60)

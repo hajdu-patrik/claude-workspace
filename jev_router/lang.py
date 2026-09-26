@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""Tiny, dependency-free language detector for the router: Hungarian vs English.
-
-The router must answer in the language the prompt was written in. Only two languages matter
-here, so a full language-ID library would be overkill: Hungarian-only letters (ő, ű, and the
-accented vowels) plus a stopword vote is accurate enough and runs in microseconds. Accent-less
-Hungarian (typical for fast typing / phone dictation, e.g. "irj egy fuggvenyt") is handled by the
-unaccented stopword list.
-"""
+"""Hungarian vs English: Hungarian-only letters plus a stopword vote. The unaccented stopwords
+catch accent-less typing ("irj egy fuggvenyt")."""
 import re
 
 HU_CHARS = set("áéíóöőúüűÁÉÍÓÖŐÚÜŰ")
@@ -30,8 +24,7 @@ _WORD_RE = re.compile(r"[a-záéíóöőúüű]+", re.I)
 
 
 def detect(text):
-    """Returns "hu" or "en". Ties (and empty input) default to Hungarian - the user's native
-    language - because a wrong "en" is more annoying for them than a wrong "hu"."""
+    """Returns "hu" or "en". Ties default to Hungarian: a wrong "en" is worse for a Hungarian user."""
     if not text:
         return "hu"
     hu_chars = sum(1 for c in text if c in HU_CHARS)
