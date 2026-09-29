@@ -45,6 +45,74 @@ DIFFICULTY = [
 EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max", "ultra"]
 
 
+# A pasted block (a log, a README, CI output) is not the user's own words: it must not decide the
+# answer language or the task type.
+PASTED_RE = re.compile(r"<pasted_content\b[^>]*>.*?(?:</pasted_content\b[^>]*>|\Z)", re.S)
+FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.S)
+JEV_PASTED_CHARS = 2000
+
+
+def split_pasted(prompt):
+    """(the user's own text, the pasted blocks). The own text falls back to the whole prompt."""
+    pasted = "\n".join(m.group(0) for m in PASTED_RE.finditer(prompt))
+    own = " ".join(PASTED_RE.sub(" ", prompt).split())
+    return (own or prompt), pasted
+
+
+def language_of(prompt):
+    own, _ = split_pasted(prompt)
+    return lang.detect(" ".join(FENCE_RE.sub(" ", own).split()) or own)
+
+
+# A bare go-ahead or status check continues the previous request: it keeps that request's model
+# and effort instead of being classified on its own (where it would look trivial or uncertain).
+GO_AHEAD = {
+    "mehet", "mehetsz", "mehetunk", "igen", "ja", "jah", "aha", "ok", "oke", "okes", "okay", "okey", "rendben",
+    "persze", "jo", "johet", "nyomjad", "nyomd", "nyomj", "csinald", "folytasd", "folytassuk", "folytatas",
+    "kovetkezo", "kovi", "hajra", "tovabb", "lehet", "tessek", "pontosan", "szuper", "koszi", "koszonom",
+    "yes", "yeah", "yep", "yup", "sure", "go", "continue", "proceed", "lgtm", "next", "retry", "please",
+    "thanks", "great", "perfect", "done", "try",
+}
+GO_AHEAD_FILLER = {
+    "am", "akkor", "is", "meg", "csak", "most", "kerlek", "fel", "tovabb", "ezt", "azt", "mind", "mindet", "mindent",
+    "igy", "ugy", "nyugodtan", "nyomjad", "mehet", "igen", "ok", "please", "do", "it", "ahead", "on", "again",
+    "then", "all", "that", "this", "now", "go", "keep", "going", "yes", "sure", "ujra",
+}
+STATUS_RE = re.compile(r"^(hogy allunk|hol tartunk|mi a helyzet|kesz vagy|kesz van|elkeszult|megvan|"
+                       r"how is it going|how's it going|how are we doing|any progress|are you done|status)\b")
+CONTINUATION_MAX_WORDS = 5
+
+
+def is_continuation(prompt):
+    """A bare go-ahead ("mehet", "yes, do it", "igen torold!") or a status check ("hogy allunk?"):
+    at most one word beyond the go-ahead and filler words, so "ok, most irj teszteket" is new work."""
+    own, pasted = split_pasted(prompt)
+    if pasted:
+        return False
+    words = re.findall(r"[a-z0-9']+", _norm(own))
+    if not words or len(words) > CONTINUATION_MAX_WORDS:
+        return False
+    if STATUS_RE.match(" ".join(words)):
+        return True
+    if words[0] not in GO_AHEAD:
+        return False
+    return len([w for w in words[1:] if w not in GO_AHEAD_FILLER and w not in GO_AHEAD]) <= 1
+
+
+def continued_decision(previous, lang_code):
+    """The previous decision, re-used for a continuation (safety is always judged on the new prompt)."""
+    keep = ("task", "task_conf", "level", "primary", "verify", "skill", "skill_path", "skill_native", "effort",
+            "model", "extra_agents")
+    d = {k: previous[k] for k in keep if k in previous}
+    d.setdefault("primary", "main")
+    d.setdefault("task", "general")
+    d.setdefault("task_conf", 0.0)
+    d.setdefault("level", 1)
+    d.update(backend="continuation", lang=lang_code, destructive_p=None, verify=d.get("verify") or "",
+             notes=["continues the previous request: keep its model and effort"])
+    return d
+
+
 def _norm(text):
     t = unicodedata.normalize("NFKD", text.lower())
     return "".join(c for c in t if not unicodedata.combining(c))
@@ -335,10 +403,12 @@ def use_jev(backend=None):
     return BACKEND == "jev" or (BACKEND == "auto" and bool(jev_key()))
 
 
-def classify(prompt, skills=None, backend=None, effort=None, models=None):
+def classify(prompt, skills=None, backend=None, effort=None, models=None, pasted=""):
+    """pasted: blocks the user pasted; JEV sees them as context, the local classifier ignores them."""
     candidates = skills or []
     if use_jev(backend):
-        answers = _jev_answers(prompt, candidates, effort, models)
+        state = prompt + (f"\n\n[Pasted by the user, not their own words]\n{pasted}" if pasted else "")
+        answers = _jev_answers(state, candidates, effort, models)
     else:
         answers = _mock_answers(prompt, candidates, effort)
     return _enforce_policy(answers, effort, models)
@@ -537,10 +607,11 @@ FOREIGN_PATH_MAX_STARTS = 20
 
 
 def _project_root(path):
-    """Nearest ancestor (itself included) with a CLAUDE.md or .claude/, or None."""
+    """Nearest ancestor (itself included) with a CLAUDE.md, AGENTS.md or .claude/, or None."""
     node = path if path.is_dir() else path.parent
     for _ in range(50):
-        if node.exists() and ((node / "CLAUDE.md").is_file() or (node / ".claude").is_dir()):
+        if node.exists() and ((node / "CLAUDE.md").is_file() or (node / "AGENTS.md").is_file()
+                              or (node / ".claude").is_dir()):
             return node
         parent = node.parent
         if parent == node:
@@ -600,7 +671,7 @@ def foreign_project_note(prompt, cwd):
             project = _project_root(resolved)
             if not project or project == here or here.is_relative_to(project) or project.is_relative_to(here):
                 continue
-            return (f"this prompt names {project}, a different project with its own CLAUDE.md/.claude config - "
+            return (f"this prompt names {project}, a different project with its own CLAUDE.md/AGENTS.md/.claude config - "
                     f"Workflow and Agent tool custom subagent types are scoped to this session's own root "
                     f"({here}), not to that path")
     except Exception:  # noqa: BLE001 - must never affect routing
@@ -608,16 +679,18 @@ def foreign_project_note(prompt, cwd):
     return None
 
 
-def route(prompt, provider, backend=None, session_model=None):
+def route(prompt, provider, backend=None, session_model=None, previous=None):
     """-> (decision, rendered_text, destructive_hit, error). session_model: the model the calling
-    session already runs, so a tier can say "stay in-session"."""
+    session already runs, so a tier can say "stay in-session". previous: this session's last
+    decision, re-used when the prompt only continues it."""
     routes_all, targets_all = load_json("routes.json", {}), load_json("targets.json", {})
     routes = routes_all.get(provider) or routes_all.get(base_provider(provider)) or {"default": "main", "table": {}}
     targets = targets_all.get(provider) or targets_all.get(base_provider(provider)) or {"tiers": {"main": "Answer directly in this session."}}
     effort = effort_levels_for(provider)
     models = models_for(provider)
-    lang_code = lang.detect(prompt)
-    regex_hit = is_destructive(prompt)
+    own, pasted = split_pasted(prompt)
+    lang_code = language_of(prompt)
+    regex_hit = is_destructive(prompt)  # the whole prompt: a pasted command can be the dangerous part
 
     forced = override_for(prompt, targets)
     if forced:
@@ -626,14 +699,19 @@ def route(prompt, provider, backend=None, session_model=None):
              "destructive_p": None, "notes": ["manual override"], "backend": "override", "lang": lang_code}
         return d, render(d, regex_hit, targets, provider, lang_code, models, session_model), regex_hit, None
 
-    candidates = catalog.prefilter(prompt, catalog.load_catalog(), SKILL_CANDIDATES)
+    if previous and is_continuation(prompt):
+        d = continued_decision(previous, previous.get("lang") or lang_code)
+        return d, render(d, regex_hit, targets, provider, d["lang"], models, session_model), regex_hit, None
+
+    candidates = catalog.prefilter(own, catalog.load_catalog(), SKILL_CANDIDATES)
     by_name = {s["name"]: s for _, s in candidates}
     error = None
     try:
-        answers = classify(prompt, candidates, backend=backend, effort=effort, models=models)
+        answers = classify(own, candidates, backend=backend, effort=effort, models=models,
+                           pasted=pasted[:JEV_PASTED_CHARS])
     except Exception as exc:  # any JEV failure falls back to the local classifier
         error = f"{type(exc).__name__}: {exc}"[:200]
-        answers = classify(prompt, candidates, backend="local", effort=effort, models=models)
+        answers = classify(own, candidates, backend="local", effort=effort, models=models)
     d = decide(answers, routes, by_name)
     d["backend"] = answers.get("_backend", "local")
     d["lang"] = lang_code

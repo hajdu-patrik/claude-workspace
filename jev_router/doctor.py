@@ -5,10 +5,11 @@ import os
 import re
 from pathlib import Path
 
-from . import platforms as P, remote
+from . import integrations, platforms as P, remote
 
 HOME = P.HOME
 STATE = HOME / ".jev-router"
+CLAUDE_EVENTS = integrations.HOOK_EVENTS["claude"]
 
 
 def line(ok, label, detail=""):
@@ -56,7 +57,9 @@ def report_hooks():
     line((STATE / "bin" / "run_hook.py").is_file(), "hook shim", "~/.jev-router/bin/run_hook.py")
     cs, cx = jload(P.PATHS["claude_settings"]), jload(P.PATHS["codex_hooks"])
     agy = (jload(P.PATHS["agy_hooks"]) or {}).get("router", {})
-    line(has_hook(cs, "UserPromptSubmit") and has_hook(cs, "Stop"), "Claude UserPromptSubmit + Stop")
+    missing = [e for e in CLAUDE_EVENTS if not has_hook(cs, e)]
+    line(not missing, "Claude prompt/stop/session hooks",
+         f"missing {', '.join(missing)} - re-run: python install.py --yes" if missing else "")
     line(has_hook(cx, "UserPromptSubmit") and has_hook(cx, "Stop"), "Codex UserPromptSubmit + Stop", "(trust once: codex -> /hooks)")
     line("PreInvocation" in agy and "Stop" in agy, "Antigravity PreInvocation + Stop")
     return cs
@@ -135,6 +138,34 @@ def last_prompts(log):
     return last
 
 
+def _jsonl(path, limit):
+    rows = []
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
+            try:
+                rows.append(json.loads(raw))
+            except ValueError:
+                continue
+    return rows
+
+
+def delegation_compliance(routed, subagents):
+    """{"followed", "elsewhere", "in_session"} over the routed Claude turns that named a worker: did the
+    model start that worker before the session's next prompt? Matched by prompt_id when both have one."""
+    counts = {"followed": 0, "elsewhere": 0, "in_session": 0}
+    turns = [e for e in routed if e.get("provider") == "claude" and e.get("session") and e.get("ts")]
+    for i, e in enumerate(turns):
+        if not e.get("target_agent"):
+            continue
+        nxt = next((t["ts"] for t in turns[i + 1:] if t["session"] == e["session"]), "9999")
+        started = [s.get("agent_type") for s in subagents if s.get("session") == e["session"]
+                   and ((s.get("prompt_id") == e["prompt_id"]) if s.get("prompt_id") and e.get("prompt_id")
+                        else e["ts"] <= s.get("ts", "") < nxt)]
+        key = "followed" if e["target_agent"] in started else "elsewhere" if started else "in_session"
+        counts[key] += 1
+    return counts
+
+
 def report_activity():
     print("\n== Router activity (~/.jev-router/logs/routing.jsonl)")
     last = last_prompts(STATE / "logs" / "routing.jsonl")
@@ -142,6 +173,14 @@ def report_activity():
         line(True, f"last {p} prompt", ts)
     if not last:
         line(False, "no routed prompt logged yet")
+    sub_log = STATE / "logs" / "subagents.jsonl"
+    if not sub_log.exists():
+        line(True, "Delegation compliance", "no SubagentStart data yet")
+        return
+    c = delegation_compliance(_jsonl(STATE / "logs" / "routing.jsonl", 500), _jsonl(sub_log, 2000))
+    total = sum(c.values())
+    line(True, "Delegation compliance", f"{c['followed']}/{total} turns used the advised worker, "
+         f"{c['elsewhere']} another agent, {c['in_session']} answered in-session" if total else "no advised worker yet")
 
 
 def main():

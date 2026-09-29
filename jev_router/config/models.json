@@ -176,18 +176,6 @@
         "description": "GPT-5.5 - legacy; not available on the tested plan"
       },
       {
-        "id": "gpt-5.4",
-        "selectable": false,
-        "role": "balanced",
-        "levels": [
-          "low",
-          "medium",
-          "high",
-          "xhigh"
-        ],
-        "description": "hidden in the catalog (visibility=hide)"
-      },
-      {
         "id": "gpt-daybreak-blue-latest",
         "selectable": false,
         "levels": [

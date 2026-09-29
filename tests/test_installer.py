@@ -13,6 +13,7 @@ from jev_router import core, hooks as run_hook, integrations as install_hooks, p
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(run_hook, "LOG_FILE", tmp_path / "routing.jsonl")
+    monkeypatch.setattr(run_hook, "SUBAGENT_LOG", tmp_path / "subagents.jsonl")
     monkeypatch.setattr(run_hook, "SEEN_FILE", tmp_path / "seen.json")
     monkeypatch.setattr(core, "STATE_DIR", tmp_path)
     monkeypatch.setattr(core, "BACKEND", "local")
@@ -115,13 +116,14 @@ def test_install_hooks_idempotent_and_uninstall(tmp_path, monkeypatch):
     s = json.loads(paths["claude_settings"].read_text())
     assert s["model"] == "sonnet"
     assert len(s["hooks"]["Stop"]) == 2                                # foreign hook kept, ours added
+    assert set(s["hooks"]) == {"UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "SubagentStart"}
+    assert set(json.loads(paths["codex_hooks"].read_text())["hooks"]) == {"UserPromptSubmit", "Stop"}
     agy = json.loads(paths["agy_hooks"].read_text())
     assert set(agy["router"]) == {"PreInvocation", "Stop"}
     assert "jev-router" in paths["codex_config"].read_text()
     install_hooks.install(apply=True, uninstall=True)
     s = json.loads(paths["claude_settings"].read_text())
-    assert s["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "other"}]}]
-    assert "UserPromptSubmit" not in s["hooks"]
+    assert s["hooks"] == {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}
     assert "jev-router" not in paths["codex_config"].read_text()
 
 

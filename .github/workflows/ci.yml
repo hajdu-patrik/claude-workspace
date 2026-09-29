@@ -28,4 +28,4 @@ jobs:
       - name: Package entry points
         run: |
           python -m jev_router --help
-          jev-router --help
+          trirouter --help

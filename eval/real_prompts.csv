@@ -1,0 +1,46 @@
+id,prompt,task,difficulty,destructive,lang,previous
+1,javisd ki a hibat a bejelentkezo oldalon mert nem enged be,code,1,0,hu,
+2,"csinalj egy alapos konzisztencia ellenorzest a UI-on, a gombok szinei es meretei legyenek egysegesek",code,1,0,hu,
+3,"szerinted milyen domaint vegyek, .hu vagy .com?",qa,0,0,hu,
+4,es ez jobb mint egy nginx vagy apache?,qa,1,0,hu,
+5,ha elfelejtettem a postgres jelszavam hogy tudom megnezni vagy visszaallitani?,qa,1,0,hu,
+6,"nezd meg hogy az osszes projektemben a README es a LICENSE ugyanolyan stilusu-e, ahol nem ott igazitsd hozza",general,1,0,hu,
+7,"Elrontottad a betolto kepernyon az animaciot, javitsd meg hogy jo legyen ujra!",code,1,0,hu,
+8,a gombokon legyen kontrasztosabb hover animacio,code,1,0,hu,
+9,a riportban leirt hibakat amik megmaradtak azokat is javitsd,code,1,0,hu,
+10,javitsd ki ami nem volt tokeletes a low medium es info szintu talalatokbol,code,1,0,hu,
+11,toroljuk a pipelineban mindig a teszt fajlokat es dumpokat amiket nem hasznalunk,code,1,1,hu,
+12,irj unit teszteket a kosar szamitasra,test,1,0,hu,
+13,futtasd le a teszteket es nezd meg mi bukik,test,1,0,hu,
+14,mennyi 17 szazaleka a 2400-nak?,math,0,0,hu,
+15,foglald ossze a harmadik eloadas jegyzetet a vizsgara,study,1,0,hu,
+16,mi a legfrissebb python verzio most?,research,0,0,hu,
+17,irj egy rovid emailt a csapatnak hogy holnap csuszik a meeting,general,0,0,hu,
+18,Kerlek torold az osszes ures mappat ami nem kell,general,1,1,hu,
+19,"<pasted_content id=""p1""> Traceback (most recent call last): File ""app.py"", line 12, in <module> KeyError: 'user' </pasted_content id=""p1""> ez mi a hiba?",code,1,0,hu,
+20,"Valami elromlott az uj commitokban es a pipeline nem engedi at: <pasted_content id=""p2""> CI / test (ubuntu-latest) Failing after 9s. Process completed with exit code 1. The job was not successful and the build has failed. </pasted_content id=""p2"">",code,1,0,hu,
+21,"a readme-t frissitsd ilyen stilusura: <pasted_content id=""p3""> # Project Title ![Python](https://img.shields.io/badge/Python-3.12-blue) ## Getting started Install the package and run the server with the default settings. </pasted_content id=""p3"">",general,1,0,hu,
+22,"<pasted_content id=""p4""> PS C:\> Get-ChildItem : Cannot find path 'C:\temp\x' because it does not exist. At line:1 char:1 </pasted_content id=""p4""> ez miert nem mukodik?",code,1,0,hu,
+23,mehet,test,1,0,hu,irj unit teszteket a kosar szamitasra
+24,igen!,code,1,0,hu,refaktorald az auth modult
+25,hogy allunk?,code,1,0,hu,javitsd ki a hibat a fizetesi oldalon
+26,nyomjad,code,2,0,hu,Refaktoráld az egész backendet hexagonális architektúrára
+27,igen torold!,general,0,1,hu,toroljuk a regi log fajlokat a szerverrol
+28,mehet fel,code,1,0,hu,irj egy scriptet ami atmeretezi a kepeket
+29,ok,study,1,0,hu,foglald ossze a vizsgaanyagot a masodik zh-ra
+30,go ahead,test,1,0,en,Write integration tests for the payment API
+31,"yes, do it",code,1,0,en,Fix the race condition in the job scheduler
+32,continue,qa,1,0,en,Explain how TCP congestion control works
+33,how is it going?,code,2,0,en,Refactor the whole billing service into separate modules
+34,Try again,code,1,0,en,Implement pagination for the orders endpoint
+35,"the build is failing on linux but works on windows, can you check why",code,1,0,en,
+36,Reply with exactly: OK,general,0,0,en,
+37,"<pasted_content id=""p5""> error TS2339: Property 'id' does not exist on type 'User'. </pasted_content id=""p5""> fix this",code,1,0,en,
+38,should i use postgres or mongo for a small booking app?,qa,1,0,en,
+39,mi a kulonbseg a git merge es a rebase kozott?,qa,1,0,hu,
+40,inditsd ujra a szervert es nezd meg a logokat,code,1,0,hu,
+41,keszits egy tervet a kovetkezo sprintre,general,1,0,hu,
+42,"a mobil nezetben szetcsuszik a fejlec, javitsd",code,1,0,hu,
+43,optimalizald a lekerdezeseket mert lassu az oldal,code,1,0,hu,
+44,rendben,general,0,0,hu,irj egy bevasarlolistat a hetvegere
+45,"koszi, mehet tovabb",code,1,0,hu,irj egy fuggvenyt ami validalja az email cimet

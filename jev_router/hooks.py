@@ -6,6 +6,7 @@ turn and carries no prompt text. So the latest user input is read back from the 
 context is injected only once per user turn.
 
     python -m jev_router.hooks claude|codex UserPromptSubmit|Stop [--cloud-only]
+    python -m jev_router.hooks claude StopFailure|SessionEnd|SubagentStart
     python -m jev_router.hooks antigravity  PreInvocation|Stop
 """
 import hashlib
@@ -19,11 +20,14 @@ from pathlib import Path
 from . import core, queue_state
 
 LOG_FILE = core.STATE_DIR / "logs" / "routing.jsonl"
+SUBAGENT_LOG = core.STATE_DIR / "logs" / "subagents.jsonl"
 SEEN_FILE = core.STATE_DIR / "state" / "antigravity_seen.json"
 SKIP_TAGS = ("#norouter", "#privat")
-# Harness-injected pseudo-prompts (background task results, reminders) are not user requests.
+# Harness-injected pseudo-prompts (background task results, reminders, subagent hand-backs) are not
+# user requests.
 SYSTEM_PREFIXES = ("<task-notification", "<system-reminder", "[system notification", "<command-", "<local-command",
-                   "caveat: the messages below")
+                   "caveat: the messages below", "<agent-message")
+STOP_EVENTS = ("Stop", "StopFailure", "SessionEnd")
 SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}|xox[abp]-[\w-]{10,}"
                        r"|\b\d/0A[\w-]{20,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|\b(?=[\w+=-]*\d)(?=[\w+=-]*[A-Za-z])[\w+=-]{32,}\b)")
 
@@ -32,13 +36,18 @@ def redact(text):
     return SECRET_RE.sub("[redacted]", text)
 
 
-def log(entry):
+def log(entry, path=None):
+    path = path or LOG_FILE
     try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_FILE.open("a", encoding="utf-8") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+def _short_hash(value):
+    return hashlib.sha256(value.encode()).hexdigest()[:12] if value else None
 
 
 def _user_request(content):
@@ -132,12 +141,24 @@ def _transcript_mtime(payload):
         return None
 
 
-def on_stop(provider, raw):
+def on_stop(provider, hook_event_name, raw):
+    """Stop, StopFailure (the turn ended on an API error) and SessionEnd all release the queue."""
     payload = _json_object(raw)
     if payload.get("fullyIdle") is not False:  # Antigravity: background work may still run
         queue_state.on_stop(core.STATE_DIR, provider, _session_id(payload))
+    if hook_event_name == "SessionEnd":
+        queue_state.forget(core.STATE_DIR, provider, _session_id(payload))
     if provider == "antigravity":
         print("{}")  # Antigravity expects a JSON object; no "decision" allows the stop
+
+
+def on_subagent_start(provider, raw):
+    """Logs which worker the model actually delegated to; `doctor` compares it with the advice."""
+    payload = _json_object(raw)
+    if not payload.get("agent_type"):
+        return
+    log({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "session": _short_hash(_session_id(payload)),
+         "prompt_id": payload.get("prompt_id"), "agent_type": payload["agent_type"]}, SUBAGENT_LOG)
 
 
 def on_prompt(provider, hook_event_name, raw):
@@ -167,22 +188,25 @@ def on_prompt(provider, hook_event_name, raw):
 def route_and_log(prompt, provider, payload, cwd, queue_text):
     """Never raises; the decision is logged redacted."""
     t0 = time.perf_counter()
+    session_id = _session_id(payload)
     entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "provider": provider, "cwd": cwd,
-             "sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
+             "sha": _short_hash(prompt), "session": _short_hash(session_id), "prompt_id": (payload or {}).get("prompt_id"),
              "prompt": redact(prompt if os.environ.get("ROUTER_LOG_PROMPTS") == "1" else prompt[:200])}
     try:
         # Codex reports the session's model, so a tier can stay in-session
         session_model = payload.get("model") if provider == "codex" and isinstance(payload.get("model"), str) else None
-        d, text, _, error = core.route(prompt, provider, session_model=session_model)
+        previous = queue_state.recall(core.STATE_DIR, provider, session_id)
+        d, text, _, error = core.route(prompt, provider, session_model=session_model, previous=previous)
         if error:
             entry["error"] = error
+        queue_state.remember(core.STATE_DIR, provider, session_id, d)
     except Exception as exc:  # e.g. a malformed routes.json: never block
         entry["error"] = f"{type(exc).__name__}: {exc}"[:200]
         entry["latency_ms"] = int((time.perf_counter() - t0) * 1000)
         log(entry)
         return ("[router] unavailable; answer directly in this session."
                 + (" SAFETY: ask for explicit confirmation before any irreversible action." if core.is_destructive(prompt) else "")
-                + " " + core.lang.respond_line(core.lang.detect(prompt)))
+                + " " + core.lang.respond_line(core.language_of(prompt)))
     entry.update(d)
     entry["latency_ms"] = int((time.perf_counter() - t0) * 1000)
     if queue_text:
@@ -204,8 +228,10 @@ def main(argv=None):
     elif not cloud_only or core.is_cloud():  # locally the global hook already runs
         provider, hook_event_name = args
         raw = sys.stdin.buffer.read()
-        if hook_event_name == "Stop":
-            on_stop(provider, raw)
+        if hook_event_name in STOP_EVENTS:
+            on_stop(provider, hook_event_name, raw)
+        elif hook_event_name == "SubagentStart":
+            on_subagent_start(provider, raw)
         else:
             on_prompt(provider, hook_event_name, raw)
     return 0

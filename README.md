@@ -1,4 +1,4 @@
-# jev-router – One Prompt Router for Claude Code, Codex & Antigravity
+# trirouter – One Prompt Router for Claude Code, Codex & Antigravity
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat&logo=python&logoColor=white)
 ![Stdlib Only](https://img.shields.io/badge/Dependencies-None-2E7D32?style=flat)
@@ -9,7 +9,7 @@
 ![Platforms](https://img.shields.io/badge/Platforms-Windows_%7C_macOS_%7C_Linux-555555?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat)
 
-**jev-router** runs before every prompt you send to Claude Code, OpenAI Codex or Google Antigravity –
+**trirouter** runs before every prompt you send to Claude Code, OpenAI Codex or Google Antigravity –
 in every project, in the desktop apps and in remote sessions – and decides for that single request:
 
 * **which model** and **which reasoning effort** to use,
@@ -17,6 +17,10 @@ in every project, in the desktop apps and in remote sessions – and decides for
 * **which skill** fits – from one shared folder that all three tools read,
 * whether the request is **irreversible** (then the model must ask before acting),
 * **which language** to answer in (the language of the prompt).
+
+> Formerly **jev-router**, renamed because unrelated packages already use that name on npm and PyPI.
+> Internal names stay the same, so existing installs keep working: the `jev_router` Python package,
+> `~/.jev-router/` and the `jev-router` MCP server.
 
 It also **protects running work**: a prompt sent while an earlier one is still being processed is
 queued behind it and must not stop or overwrite it.
@@ -32,8 +36,8 @@ Requirements: Python 3.10+ and at least one of [Claude Code](https://code.claude
 [Codex CLI](https://developers.openai.com/codex) or [Antigravity CLI](https://antigravity.google/docs/cli/install/).
 
 ```bash
-git clone https://github.com/hajdu-patrik/claude-workspace.git jev-router
-cd jev-router
+git clone https://github.com/hajdu-patrik/claude-workspace.git trirouter
+cd trirouter
 python install.py
 ```
 
@@ -70,6 +74,8 @@ For Claude desktop *Chat/Cowork*, restart the app and add to *Settings → Profi
 
 ```
 prompt ─► hook / MCP tool ─► jev_router/core.route()
+                               ├─ is_continuation()         "mehet" / "yes, do it" → keep the last decision
+                               ├─ split_pasted()            pasted blocks never decide language or task
                                ├─ lang.detect()             answer language
                                ├─ is_destructive()          regex safety net (+ JEV verdict)
                                ├─ catalog.prefilter()       shared skill catalog → ≤ 8 candidates
@@ -82,7 +88,7 @@ prompt ─► hook / MCP tool ─► jev_router/core.route()
 
 | Surface | Mechanism |
 | --- | --- |
-| Claude Code (CLI, desktop *Code*, Remote Control) | `UserPromptSubmit` + `Stop` hooks |
+| Claude Code (CLI, desktop *Code*, Remote Control) | `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd`, `SubagentStart` hooks |
 | Codex (CLI, ChatGPT app in Codex mode) | `UserPromptSubmit` + `Stop` hooks |
 | Antigravity (CLI, desktop app) | `PreInvocation` + `Stop` hooks (prompt read from the transcript, injected once per turn) |
 | Claude desktop *Chat / Cowork* (no hooks there) | MCP tool `route_prompt` |
@@ -91,10 +97,10 @@ prompt ─► hook / MCP tool ─► jev_router/core.route()
 
 ### Model and effort are enforced, not suggested
 
-No tool lets a hook switch the running model. jev-router therefore generates one **worker agent per
+No tool lets a hook switch the running model. trirouter therefore generates one **worker agent per
 (model, effort) pair** – Claude subagents `<model>-worker-<effort>` (plus `test-worker-<effort>`),
 Codex roles `<model>-<effort>` – and the router delegates to the right one. Antigravity agents can
-pin only a model tier (flash / pro), not an effort, and only as subagents: jev-router generates
+pin only a model tier (flash / pro), not an effort, and only as subagents: trirouter generates
 `gemini-flash-worker` and `gemini-pro-worker` (`~/.gemini/config/agents/`), and hard requests are
 delegated to the Pro one; otherwise the model choice is advisory (or enforced through `cli-bridge`).
 
@@ -110,6 +116,18 @@ the test tier – so a new model needs one line in `models.json`, not a new temp
 
 The `ultra` effort level is never offered, stripped from any answer and has no worker.
 
+### Follow-ups and pasted text
+
+A bare go-ahead or status check – "mehet", "igen, töröld!", "yes, do it", "hogy állunk?" – keeps the
+previous decision of the same session (model, effort, worker) instead of being classified on its own,
+where it would look trivial. At most one word beyond the go-ahead is allowed, so "ok, most írj
+teszteket" is routed as new work. The safety check always runs on the new prompt.
+
+Pasted blocks (`<pasted_content>`: logs, CI output, a README) are not the user's own words: they never
+decide the answer language or the task type. JEV still sees them as context, and the safety regex
+still scans them, because a pasted command can be the dangerous part. Subagent hand-backs
+(`<agent-message>`) are not routed at all.
+
 ### Parallel agents
 
 | Extra agents | When |
@@ -124,11 +142,15 @@ Code-level clamps: one fewer when the answer is not confident, at most +1 unless
 
 ### Queue protection
 
-All three tools already queue messages typed while the agent is busy. jev-router adds the missing
+All three tools already queue messages typed while the agent is busy. trirouter adds the missing
 context: the new prompt is told that earlier work in the same session is still running and must be
 finished first – never stopped, restarted or overwritten. If another session works in the same
-folder, the prompt is warned not to modify that session's files. State expires automatically, so a
-crashed session never blocks anything.
+folder, the prompt is warned not to modify that session's files. Claude's `StopFailure` (a turn that
+died on an API error) and `SessionEnd` release the queue as well, and state expires automatically,
+so a crashed session never blocks anything.
+
+`doctor` also reports **delegation compliance**: the `SubagentStart` hook records which worker the
+model really started, so you can see how often it followed the router's advice.
 
 ### Shared skills
 
@@ -202,7 +224,7 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 
 ```
 install.py                 entry point: `python install.py [command]` (same as `python -m jev_router`)
-pyproject.toml             package metadata, console script `jev-router`, pytest settings
+pyproject.toml             package metadata, console script `trirouter`, pytest settings
 jev_router/                the package
 ├── cli.py                 commands: setup, detect, models, remote, skills, doctor, uninstall, route
 ├── core.py                classification, decision, rendering, safety regex, JEV client + built-in classifier
@@ -219,9 +241,9 @@ jev_router/                the package
 ├── config/                models.json (catalog + policy), routes.json (task → tier), targets.json (tier → worker)
 ├── templates/agents/      role templates fast/balanced/deep/test-worker.md (rendered into
 │                          ~/.claude/agents, ~/.codex/agents and ~/.gemini/config/agents)
-└── skills/                skills bundled with jev-router (cli-bridge)
+└── skills/                skills bundled with trirouter (cli-bridge)
 tests/                     unit tests, model-policy test
-eval/                      100 Hungarian + 100 English labelled prompts, evaluation script
+eval/                      100 Hungarian + 100 English labelled prompts, 45 real-traffic shapes, evaluation script
 docs/                      speech-to-text and remote-access guides
 ```
 
@@ -230,13 +252,17 @@ docs/                      speech-to-text and remote-access guides
 ## 🧪 Development
 
 ```bash
-pip install -e .[dev]              # optional: editable install, adds the `jev-router` command
+pip install -e .[dev]              # optional: editable install, adds the `trirouter` command
 python -m pytest tests -q          # unit tests incl. the model-policy check
 python eval/eval_router.py         # full pipeline on the labelled prompts (exit 1 below target)
 ```
 
-Evaluation targets: task accuracy ≥ 85 % per language, destructive-request recall 100 %,
-false positives < 5 %, reply language 100 %. The test suite runs on Windows, macOS and Linux in CI.
+Evaluation targets on the curated sets: task accuracy ≥ 85 % per language, "routing uncertain" ≤ 25 %,
+destructive-request recall 100 %, false positives < 5 %, reply language 100 %. The real-traffic set
+(`eval/real_prompts.csv`: typos, missing accents, pasted blocks, go-aheads) has lower regression
+gates, because the built-in classifier is weak there and JEV is the real fix. Every set also reports
+tier accuracy next to the best fixed-tier baseline: routing only pays off if it beats always picking
+the same tier. The test suite runs on Windows, macOS and Linux in CI.
 
 See [CHANGELOG.md](CHANGELOG.md) for the release history and [CLAUDE.md](CLAUDE.md) for contributor
 conventions.

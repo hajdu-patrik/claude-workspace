@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Router quality on the Hungarian and English test sets, through the full core.route pipeline.
+"""Router quality through the full core.route pipeline.
 
-    python eval/eval_router.py [eval/en_prompts.csv]
+    python eval/eval_router.py [eval/en_prompts.csv ...]
 
-Targets: task accuracy >= 85% per language, destructive recall 100%, false positives < 5%, reply
-language 100%. Exits 1 if any target is missed. Details: eval/results_<name>.csv.
+Sets: hu_prompts / en_prompts (curated) and real_prompts (anonymized shapes of real traffic: typos,
+missing accents, pasted blocks, go-aheads). Optional columns: `lang` (expected reply language, else
+taken from the file name) and `previous` (an earlier prompt of the same session, routed first).
+
+Besides task accuracy the report shows the share of "routing uncertain" decisions and the tier
+accuracy next to the best fixed-tier baseline: a router is only useful if it beats always picking the
+same tier. Exits 1 if any target is missed. Details: eval/results_<name>.csv.
 """
 import csv
 import sys
@@ -15,26 +20,38 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from jev_router import core  # noqa: E402
 
-TARGETS = {"task": 0.85, "destr_recall": 1.0, "destr_fp": 0.05, "lang": 1.0}
+TARGETS = {"task": 0.85, "destr_recall": 1.0, "destr_fp": 0.05, "lang": 1.0, "uncertain": 0.25}
+# Regression gates for the real-traffic set, not goals: the local classifier is weak on it by design,
+# JEV is the fix. Raise them whenever the measured numbers improve.
+REAL_TARGETS = {"task": 0.70, "destr_recall": 1.0, "destr_fp": 0.05, "lang": 1.0, "uncertain": 0.35}
 
 
-def route_row(r):
-    d, _, hit, err = core.route(r["prompt"], "claude")
+def expected_tier(task, difficulty, routes):
+    row = routes.get("table", {}).get(task) or ["main"] * 3
+    return row[min(int(difficulty), len(row) - 1)].partition("+verify:")[0]
+
+
+def route_row(r, lang_expected, routes):
+    previous = None
+    if r.get("previous"):
+        previous, _, _, _ = core.route(r["previous"], "claude")
+    d, _, hit, err = core.route(r["prompt"], "claude", previous=previous)
     return {"id": r["id"], "prompt": r["prompt"], "task_true": r["task"], "task_pred": d["task"],
             "task_conf": d["task_conf"], "diff_true": int(r["difficulty"]), "diff_pred": d["level"],
             "destr_true": int(r["destructive"]), "destr_pred": int(hit), "lang": d.get("lang"),
-            "tier": d["primary"] + (f"+{d['verify']}" if d.get("verify") else ""), "effort": d.get("effort"),
-            "skill": d.get("skill") or "", "backend": d["backend"], "error": err or ""}
+            "lang_true": r.get("lang") or lang_expected, "uncertain": int("routing uncertain" in d.get("notes", [])),
+            "tier_true": expected_tier(r["task"], r["difficulty"], routes), "tier": d["primary"],
+            "verify": d.get("verify") or "", "effort": d.get("effort"), "skill": d.get("skill") or "",
+            "backend": d["backend"], "error": err or ""}
 
 
 def counts(values):
-    """'a 3, b 1' - most common first."""
     return ", ".join(f"{k} {v}" for k, v in Counter(values).most_common())
 
 
 def print_prompts(label, rows):
     for o in rows:
-        print(f"    {label}: {o['prompt']}")
+        print(f"    {label}: {o['prompt'][:110]}")
 
 
 def report_task(out):
@@ -45,7 +62,17 @@ def report_task(out):
     exact = sum(o["diff_true"] == o["diff_pred"] for o in out) / len(out)
     near = sum(abs(o["diff_true"] - o["diff_pred"]) <= 1 for o in out) / len(out)
     print(f"Difficulty:           exact {exact:.0%}, within +-1 {near:.0%}")
-    return task_acc
+    uncertain = sum(o["uncertain"] for o in out) / len(out)
+    print(f"Routing uncertain:    {uncertain:.0%}")
+    return task_acc, uncertain
+
+
+def report_tiers(out):
+    acc = sum(o["tier"] == o["tier_true"] for o in out) / len(out)
+    tier_counts = Counter(o["tier_true"] for o in out)
+    best_tier, best_n = tier_counts.most_common(1)[0]
+    print(f"Tier accuracy:        {acc:.0%}  (best fixed tier '{best_tier}': {best_n / len(out):.0%})")
+    print("Tiers picked:         " + counts(o["tier"] + (f"+{o['verify']}" if o["verify"] else "") for o in out))
 
 
 def report_destructive(out):
@@ -59,10 +86,10 @@ def report_destructive(out):
     return recall, fp
 
 
-def report_lang(out, lang_expected):
-    lang_acc = sum(o["lang"] == lang_expected for o in out) / len(out)
-    print(f"Reply language ({lang_expected}):  {lang_acc:.0%}")
-    print_prompts("LANG", [o for o in out if o["lang"] != lang_expected])
+def report_lang(out):
+    lang_acc = sum(o["lang"] == o["lang_true"] for o in out) / len(out)
+    print(f"Reply language:       {lang_acc:.0%}")
+    print_prompts("LANG", [o for o in out if o["lang"] != o["lang_true"]])
     return lang_acc
 
 
@@ -74,21 +101,24 @@ def write_results(name, out):
 
 
 def evaluate(path):
-    lang_expected = "en" if "en_" in Path(path).name else "hu"
-    with open(path, encoding="utf-8-sig", newline="") as fh:
-        out = [route_row(r) for r in csv.DictReader(fh)]
     name = Path(path).stem
-    print(f"\n=== {name}  ({len(out)} prompts, backend: {out[0]['backend'] if out else '-'})")
-    task_acc = report_task(out)
+    lang_expected = "en" if name.startswith("en_") else "hu"
+    targets = REAL_TARGETS if name.startswith("real_") else TARGETS
+    routes = core.load_json("routes.json", {}).get("claude", {})
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        out = [route_row(r, lang_expected, routes) for r in csv.DictReader(fh)]
+    print(f"\n=== {name}  ({len(out)} prompts, backend: {counts(o['backend'] for o in out)})")
+    task_acc, uncertain = report_task(out)
+    report_tiers(out)
     recall, fp = report_destructive(out)
-    lang_acc = report_lang(out, lang_expected)
-    print("Tiers:                " + counts(o["tier"] for o in out))
+    lang_acc = report_lang(out)
     print("Efforts:              " + counts(o["effort"] for o in out))
     print("Skills picked:        " + (counts(o["skill"] for o in out if o["skill"]) or "none"))
     write_results(name, out)
-    ok = (task_acc >= TARGETS["task"] and recall >= TARGETS["destr_recall"] and fp < TARGETS["destr_fp"]
-          and lang_acc >= TARGETS["lang"])
-    print("RESULT:               " + ("PASS" if ok else "FAIL") + f"  (targets: task>={TARGETS['task']:.0%}, recall 100%, FP<5%, lang 100%)")
+    ok = (task_acc >= targets["task"] and recall >= targets["destr_recall"] and fp < targets["destr_fp"]
+          and lang_acc >= targets["lang"] and uncertain <= targets["uncertain"])
+    print("RESULT:               " + ("PASS" if ok else "FAIL")
+          + f"  (targets: task>={targets['task']:.0%}, uncertain<={targets['uncertain']:.0%}, recall 100%, FP<5%, lang 100%)")
     return ok
 
 
@@ -98,4 +128,5 @@ def main(paths):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:] or [str(ROOT / "eval" / "hu_prompts.csv"), str(ROOT / "eval" / "en_prompts.csv")]))
+    default = [str(ROOT / "eval" / f"{n}_prompts.csv") for n in ("hu", "en", "real")]
+    sys.exit(main(sys.argv[1:] or default))

@@ -7,6 +7,32 @@ dates are ISO 8601.
 
 ## [Unreleased]
 
+### Added
+- Follow-ups keep the previous decision: a bare go-ahead or status check ("mehet", "igen, töröld!",
+  "yes, do it", "hogy állunk?") re-uses the same session's last model, effort and worker instead of
+  being classified on its own. The safety check still runs on the new prompt. The last decision is
+  kept per session for `ROUTER_CONTINUATION_TTL_MIN` (default 180) and dropped at `SessionEnd`.
+- Claude hooks `StopFailure` and `SessionEnd` release the queue protection, so a turn that died on an
+  API error no longer makes the next prompt see a false "QUEUE" warning.
+- Claude hook `SubagentStart` logs which worker the model really started; `doctor` reports the
+  delegation compliance against the router's advice.
+- `eval/real_prompts.csv`: 45 anonymized shapes of real traffic (typos, missing accents, pasted
+  blocks, go-aheads with an earlier prompt). The eval now also reports the "routing uncertain" share
+  and the tier accuracy next to the best fixed-tier baseline, with optional `lang` and `previous`
+  columns. On the real-traffic set task accuracy went from 44 % to 71 %, uncertain decisions from
+  56 % to 31 % and reply language from 87 % to 100 %, without tuning the vocabulary.
+
+### Changed
+- Pasted blocks (`<pasted_content>`) no longer decide the answer language or the task type; JEV
+  still gets them as context and the safety regex still scans them. Subagent hand-backs
+  (`<agent-message>`) are no longer routed.
+- A project with only an `AGENTS.md` now counts as a project for the cross-project heads-up (Claude
+  Code reads `AGENTS.md` when there is no `CLAUDE.md`).
+- Renamed the package and command to `trirouter`: `jev-router` is taken by unrelated packages on npm
+  and PyPI. Internal names (`jev_router`, `~/.jev-router/`, the `jev-router` MCP server) stay the
+  same, so existing installs keep working.
+- Removed `gpt-5.4` from the Codex catalog (dropped from Codex's bundled catalogs in 0.158).
+
 ### Fixed
 - Cross-project heads-up on Linux/macOS: a Windows-style path in the prompt (`C:\...`) is not rooted
   there, so its only existing "ancestor" was `.` - the hook's own working directory - and a session

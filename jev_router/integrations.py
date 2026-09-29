@@ -5,7 +5,7 @@ Every entry calls a shim in ~/.jev-router/bin/, so moving the repository only re
 the installer. A changed file's original is kept once as `<file>.bak`; a config file that is not
 valid JSON is reported and left untouched.
 
-    claude       UserPromptSubmit + Stop    ~/.claude/settings.json
+    claude       UserPromptSubmit, Stop, StopFailure, SessionEnd, SubagentStart    ~/.claude/settings.json
     codex        UserPromptSubmit + Stop    ~/.codex/hooks.json (trust once via /hooks)
     antigravity  PreInvocation + Stop       ~/.gemini/config/hooks.json
 """
@@ -95,12 +95,25 @@ def _strip_router(groups):
     return kept
 
 
+HOOK_EVENTS = {
+    # StopFailure / SessionEnd release the queue when a turn dies on an API error or the session ends;
+    # SubagentStart records which worker the model really delegated to.
+    "claude": ("UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "SubagentStart"),
+    "codex": ("UserPromptSubmit", "Stop"),
+}
+ROUTER_EVENTS = tuple(dict.fromkeys(e for events in HOOK_EVENTS.values() for e in events))
+
+
 def claude_codex_hooks(path, provider, w, uninstall=False):
     cfg = load(path)
     hooks = cfg.setdefault("hooks", {})
-    for event, matcher in (("UserPromptSubmit", provider == "codex"), ("Stop", False)):
+    wanted = () if uninstall else HOOK_EVENTS[provider]
+    for event in ROUTER_EVENTS:
+        if event not in hooks and event not in wanted:
+            continue
         groups = _strip_router(hooks.get(event))
-        if not uninstall:
+        matcher = provider == "codex" and event == "UserPromptSubmit"
+        if event in wanted:
             entry = {"hooks": [{"type": "command", "command": hook_cmd(provider, event), "timeout": 10}]}
             groups.append({"matcher": "*", **entry} if matcher else entry)
         if groups:

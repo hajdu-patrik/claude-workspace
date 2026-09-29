@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""jev-router installer - one command for Windows, macOS and Linux.
+"""trirouter installer - one command for Windows, macOS and Linux.
 
     python install.py                 interactive setup (recommended)
     python install.py --yes           non-interactive, accept the defaults
@@ -227,7 +227,7 @@ def remote_workdir(cfg):
 def next_steps(providers):
     say("\nDone. Next steps:")
     if "codex" in providers:
-        say("  * Codex runs a new or changed hook only after you trust it once: run `codex`, type /hooks, trust jev-router.")
+        say("  * Codex runs a new or changed hook only after you trust it once: run `codex`, type /hooks, trust the router hooks.")
     if "claude" in providers:
         say("  * Claude desktop Chat/Cowork: restart the app, then add to Settings > Profile > Personal preferences:")
         say('      "Before answering any new request, call the jev-router route_prompt tool with my message and follow its instructions."')
@@ -375,7 +375,7 @@ def run_route(argv):
 
 
 def run_setup():
-    say("jev-router setup" + (" (dry run - nothing will be changed)" if DRY else ""))
+    say("trirouter setup" + (" (dry run - nothing will be changed)" if DRY else ""))
     providers = detect_and_login()
     if not providers:
         say("\nNo logged-in tool found. Install and log in to at least one of them, then run this again.")

@@ -115,6 +115,46 @@ def on_stop(state_dir, provider, session_id):
             _save(path, data)
 
 
+LAST_TTL_S = _minutes("ROUTER_CONTINUATION_TTL_MIN", "180")
+LAST_KEYS = ("task", "task_conf", "level", "primary", "verify", "skill", "skill_path", "skill_native", "effort",
+             "model", "extra_agents", "lang", "target_agent")
+
+
+def _last_path(state_dir):
+    return Path(state_dir) / "state" / "last_decision.json"
+
+
+def remember(state_dir, provider, session_id, decision):
+    """The session's latest decision, so a following "mehet" can continue it."""
+    if not session_id:
+        return
+    path = _last_path(state_dir)
+    now = time.time()
+    with _Lock(path.with_suffix(".lock")):
+        data = {k: v for k, v in _load(path).items() if now - v.get("ts", 0) < LAST_TTL_S}
+        data[f"{provider}:{session_id}"] = {"ts": now, **{k: decision[k] for k in LAST_KEYS if k in decision}}
+        _save(path, data)
+
+
+def recall(state_dir, provider, session_id):
+    if not session_id:
+        return None
+    entry = _load(_last_path(state_dir)).get(f"{provider}:{session_id}")
+    if not isinstance(entry, dict) or time.time() - entry.get("ts", 0) >= LAST_TTL_S:
+        return None
+    return entry
+
+
+def forget(state_dir, provider, session_id):
+    if not session_id:
+        return
+    path = _last_path(state_dir)
+    with _Lock(path.with_suffix(".lock")):
+        data = _load(path)
+        if data.pop(f"{provider}:{session_id}", None) is not None:
+            _save(path, data)
+
+
 def render(info):
     parts = []
     if info.get("ahead"):
