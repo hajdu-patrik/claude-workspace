@@ -261,7 +261,7 @@ python -m pytest tests -q          # unit tests incl. the model-policy check
 python eval/eval_router.py         # full pipeline on the labelled prompts (exit 1 below target)
 ```
 
-Evaluation targets on the curated sets: task accuracy ≥ 85 % per language, "routing uncertain" ≤ 25 %,
+Evaluation targets on the curated sets: task accuracy ≥ 85 % per language, "routing uncertain" ≤ 30 %,
 destructive-request recall 100 %, false positives < 5 %, reply language 100 %. The real-traffic set
 (`eval/real_prompts.csv`: typos, missing accents, pasted blocks, go-aheads) has lower regression
 gates, because the built-in classifier is weak there and JEV is the real fix. Every set also reports

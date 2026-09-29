@@ -24,7 +24,8 @@ dates are ISO 8601.
   blocks, go-aheads with an earlier prompt). The eval now also reports the "routing uncertain" share
   and the tier accuracy next to the best fixed-tier baseline, with optional `lang` and `previous`
   columns. On the real-traffic set task accuracy went from 44 % to 71 %, uncertain decisions from
-  56 % to 31 % and reply language from 87 % to 100 %, without tuning the vocabulary.
+  67 % to 42 % and reply language from 87 % to 100 %, without tuning the vocabulary. The eval drops
+  any local `ROUTER_*` setting first, so its numbers always match CI.
 
 ### Changed
 - Pasted blocks (`<pasted_content>`) no longer decide the answer language or the task type; JEV
