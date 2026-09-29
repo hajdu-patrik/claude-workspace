@@ -20,6 +20,8 @@ STATE_DIR = Path(os.environ.get("JEV_ROUTER_HOME", str(Path.home() / ".jev-route
 
 API_URL = os.environ.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1/systemone")
 JEV_MODEL = os.environ.get("JEV_MODEL", "jev-1.13.0")
+OPENROUTER_URL = os.environ.get("JEV_OPENROUTER_URL", "https://openrouter.ai/api/v1/systemone")
+OPENROUTER_JEV_MODEL = os.environ.get("JEV_OPENROUTER_MODEL", "jev-1.13")  # OpenRouter takes the bare id
 TIMEOUT_S = float(os.environ.get("JEV_TIMEOUT", "4"))
 MIN_CONF = float(os.environ.get("ROUTER_MIN_CONFIDENCE", "0.6"))
 DESTRUCTIVE_T = float(os.environ.get("ROUTER_DESTRUCTIVE_THRESHOLD", "0.3"))
@@ -288,8 +290,23 @@ def user_config():
         return {}
 
 
+def jev_endpoint():
+    """(channel, url, key, model), or None. A TypeSafe token wins over an OpenRouter key. The generic
+    OPENROUTER_API_KEY is deliberately not read: other tools set it, and routing would then spend
+    that account's credit without the user ever opting in."""
+    cfg = user_config()
+    key = os.environ.get("TYPESAFE_API_KEY") or cfg.get("typesafe_api_key")
+    if key:
+        return "typesafe", API_URL, key, JEV_MODEL
+    key = os.environ.get("JEV_OPENROUTER_API_KEY") or cfg.get("openrouter_api_key")
+    if key:
+        return "openrouter", OPENROUTER_URL, key, OPENROUTER_JEV_MODEL
+    return None
+
+
 def jev_key():
-    return os.environ.get("TYPESAFE_API_KEY") or user_config().get("typesafe_api_key") or None
+    endpoint = jev_endpoint()
+    return endpoint[2] if endpoint else None
 
 
 def model_overrides():
@@ -387,11 +404,12 @@ def build_questions(skills, effort=None, models=None):
 
 
 def ask_jev(prompt, questions):
-    key = jev_key()
-    if not key:
-        raise RuntimeError("no JEV token (TYPESAFE_API_KEY or ~/.jev-router/config.json)")
-    body = json.dumps({"state": prompt[:MAX_STATE_CHARS], "model": JEV_MODEL, "questions": questions}).encode("utf-8")
-    req = urllib.request.Request(API_URL, data=body, method="POST",
+    endpoint = jev_endpoint()
+    if not endpoint:
+        raise RuntimeError("no JEV access (a TypeSafe token or an OpenRouter key: python install.py --jev-token=...)")
+    _, url, key, model = endpoint
+    body = json.dumps({"state": prompt[:MAX_STATE_CHARS], "model": model, "questions": questions}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
         return json.loads(resp.read().decode("utf-8"))

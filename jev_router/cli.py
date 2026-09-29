@@ -17,7 +17,8 @@
 `python -m jev_router <command>` is equivalent. Other programs call the route command through
 the installer's shim: python ~/.jev-router/bin/route.py --json "<text>"
 
-Options: --providers=claude,codex,antigravity  --jev-token=<token>  --remote[=<name>]  --no-migrate
+Options: --providers=claude,codex,antigravity  --jev-token=<TypeSafe token or OpenRouter key>
+         --openrouter-key=<key>  --remote[=<name>]  --no-migrate
 
 Steps of the interactive setup:
   1. detect Claude Code, Codex and Antigravity (installed? logged in?) and help you log in
@@ -44,7 +45,7 @@ CONFIG = STATE / "config.json"
 MODELS_LOCAL = STATE / "models.local.json"
 ALL = ("claude", "codex", "antigravity")
 
-VALUE_FLAGS = ("--name", "--providers", "--jev-token", "--remote", "--workdir")
+VALUE_FLAGS = ("--name", "--providers", "--jev-token", "--openrouter-key", "--remote", "--workdir")
 
 
 def parse_args(argv):
@@ -160,21 +161,33 @@ def detect_and_login():
     return providers
 
 
+def store_jev_key(cfg, key):
+    """An OpenRouter key (sk-or-...) reaches JEV through OpenRouter, anything else is a TypeSafe token."""
+    cfg["openrouter_api_key" if key.startswith("sk-or-") else "typesafe_api_key"] = key
+
+
+def jev_backend_label(cfg):
+    if cfg.get("typesafe_api_key") or os.environ.get("TYPESAFE_API_KEY"):
+        return "JEV (TypeSafe token)"
+    if cfg.get("openrouter_api_key") or os.environ.get("JEV_OPENROUTER_API_KEY"):
+        return "JEV through OpenRouter"
+    return "built-in local model (add JEV later with --jev-token=<TypeSafe token or OpenRouter key>)"
+
+
 def configure_jev(cfg):
     say("\n== 2/5  JEV / TypeSafe (the routing decision engine)")
-    token = FLAGS.get("--jev-token")
+    token = FLAGS.get("--openrouter-key") or FLAGS.get("--jev-token")
     if isinstance(token, str) and token:
-        cfg["typesafe_api_key"] = token
-    elif os.environ.get("TYPESAFE_API_KEY"):
-        say("  Using TYPESAFE_API_KEY from the environment.")
-    elif cfg.get("typesafe_api_key"):
-        say("  A token is already configured.")
+        store_jev_key(cfg, token)
+    elif os.environ.get("TYPESAFE_API_KEY") or os.environ.get("JEV_OPENROUTER_API_KEY"):
+        say("  Using the JEV key from the environment.")
+    elif cfg.get("typesafe_api_key") or cfg.get("openrouter_api_key"):
+        say("  A JEV key is already configured.")
     elif not YES and interactive():
-        token = getpass.getpass("  JEV token (input hidden; Enter = use the built-in local model): ").strip()
+        token = getpass.getpass("  TypeSafe token or OpenRouter key (input hidden; Enter = built-in local model): ").strip()
         if token:
-            cfg["typesafe_api_key"] = token
-    say("  Backend: " + ("JEV" if cfg.get("typesafe_api_key") or os.environ.get("TYPESAFE_API_KEY")
-                         else "built-in local model (add a token later with --jev-token=...)"))
+            store_jev_key(cfg, token)
+    say("  Backend: " + jev_backend_label(cfg))
 
 
 def connect(providers):

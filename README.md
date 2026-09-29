@@ -25,7 +25,8 @@ in every project, in the desktop apps and in remote sessions – and decides for
 It also **protects running work**: a prompt sent while an earlier one is still being processed is
 queued behind it and must not stop or overwrite it.
 
-Decisions come from **JEV (TypeSafe)** when you configure a token. Without one, a built-in local
+Decisions come from **JEV (TypeSafe)** when you configure a TypeSafe token or an **OpenRouter key**
+(JEV is on OpenRouter since September 2026). Without one, a built-in local
 classifier with the same answer format decides – everything works out of the box.
 
 ---
@@ -45,7 +46,8 @@ The installer walks you through five steps:
 
 1. **Detect** which of Claude Code, Codex and Antigravity are installed and logged in, and tell you
    how to log in to the ones that are not.
-2. **JEV token** – paste it, or press Enter to use the built-in local classifier.
+2. **JEV access** – paste a TypeSafe token or an OpenRouter key (`sk-or-…`), or press Enter to use the
+   built-in local classifier.
 3. **Hooks + MCP server** for every logged-in tool.
 4. **Shared skill folder** `~/.skills` – existing skills of every tool are moved there and linked
    back, so each tool sees all of them; worker agents are generated for every model × effort.
@@ -79,7 +81,7 @@ prompt ─► hook / MCP tool ─► jev_router/core.route()
                                ├─ lang.detect()             answer language
                                ├─ is_destructive()          regex safety net (+ JEV verdict)
                                ├─ catalog.prefilter()       shared skill catalog → ≤ 8 candidates
-                               ├─ classify()                JEV (token) or built-in classifier
+                               ├─ classify()                JEV (TypeSafe / OpenRouter) or built-in classifier
                                ├─ decide()                  routes.json: task × difficulty → tier
                                └─ render()                  targets.json: tier → worker, model, effort
        + queue_state            earlier work still running? → "finish it first"
@@ -204,19 +206,21 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 
 | Setting | Where |
 | --- | --- |
-| JEV token | `python install.py --jev-token=<token>` or environment variable `TYPESAFE_API_KEY` |
+| JEV access | `python install.py --jev-token=<TypeSafe token or OpenRouter key>`, or the environment variable `TYPESAFE_API_KEY` / `JEV_OPENROUTER_API_KEY`. The generic `OPENROUTER_API_KEY` is ignored on purpose: another tool's key must not start spending credit on routing. |
 | Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `bin/` (shims `run_hook.py`, `mcp_server.py`, `route.py`) |
 | Model catalog, tiers, routing table | `jev_router/config/models.json`, `targets.json`, `routes.json` |
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
-| `ROUTER_BACKEND` | `auto` | `jev`, `local` or `auto` (JEV when a token exists) |
+| `ROUTER_BACKEND` | `auto` | `jev`, `local` or `auto` (JEV when a token or key exists) |
+| `ROUTER_CONTINUATION_TTL_MIN` | `180` | how long a go-ahead can continue the session's previous decision |
 | `ROUTER_MIN_CONFIDENCE` | `0.6` | below it the task falls back to the default tier |
 | `ROUTER_MAX_EXTRA_AGENTS` | `4` | hard cap for parallel agents |
 | `ROUTER_QUEUE_TTL_MIN` | `120` | minutes after which an unfinished queue entry is ignored |
 | `ROUTER_SKILL_CANDIDATES` | `8` | skills offered to JEV per request |
 | `ROUTER_LOG_PROMPTS` | unset | `1` = log full prompts (default: first 200 characters, secrets redacted) |
 | `TYPESAFE_API_URL`, `JEV_MODEL`, `JEV_TIMEOUT` | – | JEV endpoint, pinned model version, timeout in seconds |
+| `JEV_OPENROUTER_URL`, `JEV_OPENROUTER_MODEL` | OpenRouter System One, `jev-1.13` | the same through OpenRouter |
 
 ---
 

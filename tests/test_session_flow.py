@@ -133,3 +133,49 @@ def test_delegation_compliance_counts():
         {"session": "s", "ts": "2026-09-29T10:21:00", "agent_type": "opus-worker-max"},
     ]
     assert doctor.delegation_compliance(routed, subagents) == {"followed": 1, "elsewhere": 1, "in_session": 1}
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.mark.parametrize("cfg, env, url, model, key", [
+    ({"openrouter_api_key": "sk-or-test"}, {}, core.OPENROUTER_URL, core.OPENROUTER_JEV_MODEL, "sk-or-test"),
+    ({"openrouter_api_key": "sk-or-test", "typesafe_api_key": "ts-token"}, {}, core.API_URL, core.JEV_MODEL, "ts-token"),
+    ({}, {"JEV_OPENROUTER_API_KEY": "sk-or-env"}, core.OPENROUTER_URL, core.OPENROUTER_JEV_MODEL, "sk-or-env"),
+])
+def test_jev_request_goes_to_the_configured_channel(monkeypatch, cfg, env, url, model, key):
+    monkeypatch.setattr(core, "user_config", lambda: cfg)
+    monkeypatch.delenv("JEV_OPENROUTER_API_KEY", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    sent = {}
+
+    def fake_urlopen(req, timeout):
+        sent.update(url=req.full_url, auth=req.get_header("Authorization"), body=json.loads(req.data))
+        return _Resp(json.dumps({"model": "typesafe/jev-1.13-x", "answers": {}}).encode())
+
+    monkeypatch.setattr(core.urllib.request, "urlopen", fake_urlopen)
+    core.ask_jev("state text", {"q": {"type": "noul", "instructions": "x"}})
+    assert sent["url"] == url and sent["body"]["model"] == model and sent["auth"] == f"Bearer {key}"
+
+
+def test_generic_openrouter_key_does_not_enable_jev(monkeypatch):
+    monkeypatch.setattr(core, "user_config", lambda: {})
+    monkeypatch.delenv("JEV_OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-other-tool")
+    assert core.jev_endpoint() is None
+    monkeypatch.setattr(core, "BACKEND", "auto")
+    assert not core.use_jev()
+
+
+def test_installer_stores_an_openrouter_key_separately():
+    from jev_router import cli
+    cfg = {}
+    cli.store_jev_key(cfg, "sk-or-v1-abc")
+    cli.store_jev_key(cfg, "ts-123")
+    assert cfg == {"openrouter_api_key": "sk-or-v1-abc", "typesafe_api_key": "ts-123"}

@@ -102,8 +102,13 @@ def report_skills(cfg_toml):
 def report_config():
     print("\n== Configuration (~/.jev-router/config.json)")
     cfg = jload(STATE / "config.json") or {}
-    jev = os.environ.get("TYPESAFE_API_KEY") or cfg.get("typesafe_api_key")
-    line(True, "Decision backend", "JEV (token configured)" if jev else "built-in local model (no JEV token)")
+    if os.environ.get("TYPESAFE_API_KEY") or cfg.get("typesafe_api_key"):
+        backend = "JEV (TypeSafe token)"
+    elif os.environ.get("JEV_OPENROUTER_API_KEY") or cfg.get("openrouter_api_key"):
+        backend = "JEV through OpenRouter"
+    else:
+        backend = "built-in local model (python install.py --jev-token=<TypeSafe token or OpenRouter key>)"
+    line(True, "Decision backend", backend)
     line(True, "Remote access name", cfg.get("remote_name") or "not set up (python install.py remote)")
     line(True, "Per-account model overrides", "yes" if (STATE / "models.local.json").exists()
          else "no (python install.py models --probe)")

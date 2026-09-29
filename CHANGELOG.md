@@ -8,6 +8,10 @@ dates are ISO 8601.
 ## [Unreleased]
 
 ### Added
+- JEV through OpenRouter: an OpenRouter key (`--jev-token=sk-or-...` or `--openrouter-key=...`, or
+  `JEV_OPENROUTER_API_KEY`) reaches JEV's System One API on OpenRouter (model `jev-1.13`). A TypeSafe
+  token still wins when both exist. The generic `OPENROUTER_API_KEY` is ignored on purpose, so another
+  tool's key never starts spending credit on routing. `doctor` shows which channel is active.
 - Follow-ups keep the previous decision: a bare go-ahead or status check ("mehet", "igen, töröld!",
   "yes, do it", "hogy állunk?") re-uses the same session's last model, effort and worker instead of
   being classified on its own. The safety check still runs on the new prompt. The last decision is
