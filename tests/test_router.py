@@ -266,6 +266,15 @@ def test_hook_antigravity_reads_transcript_once_per_turn(monkeypatch, capsys, tm
     assert log[0]["provider"] == "antigravity"
 
 
+def test_hook_antigravity_plan_mode_prompt_is_routed(monkeypatch, capsys, tmp_path):
+    tr = tmp_path / "transcript.jsonl"
+    tr.write_text(json.dumps({"step_index": 0, "type": "USER_INPUT",
+                              "content": "<USER_REQUEST>\n/plan Write pytest tests for the parser\n</USER_REQUEST>"}) + "\n",
+                  encoding="utf-8")
+    out = run(monkeypatch, capsys, "antigravity", "PreInvocation", {"conversationId": "p1", "transcriptPath": str(tr)})
+    assert "task=test" in out["injectSteps"][0]["ephemeralMessage"]
+
+
 def test_hook_antigravity_missing_transcript(monkeypatch, capsys, tmp_path):
     assert run(monkeypatch, capsys, "antigravity", "PreInvocation", {"transcriptPath": str(tmp_path / "nope")}) is None
 

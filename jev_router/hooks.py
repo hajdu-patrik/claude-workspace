@@ -50,11 +50,14 @@ def _short_hash(value):
     return hashlib.sha256(value.encode()).hexdigest()[:12] if value else None
 
 
+AGY_MODE_PREFIX = re.compile(r"^\s*/plan\b\s*")  # plan mode stores the prompt as "/plan <prompt>"
+
+
 def _user_request(content):
     """Antigravity wraps the typed prompt in <USER_REQUEST> tags, followed by metadata."""
     _, opened, rest = content.partition("<USER_REQUEST>")
     body, closed, _ = rest.partition("</USER_REQUEST>")
-    return body if opened and closed else content
+    return AGY_MODE_PREFIX.sub("", body if opened and closed else content)
 
 
 def _antigravity_prompt(payload):

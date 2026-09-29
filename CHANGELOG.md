@@ -39,6 +39,8 @@ dates are ISO 8601.
 - Removed `gpt-5.4` from the Codex catalog (dropped from Codex's bundled catalogs in 0.158).
 
 ### Fixed
+- Antigravity in plan mode was never routed: agy stores the prompt as `/plan <prompt>`, which the hook
+  took for a slash command and skipped. The `/plan` prefix is now stripped.
 - Cross-project heads-up on Linux/macOS: a Windows-style path in the prompt (`C:\...`) is not rooted
   there, so its only existing "ancestor" was `.` - the hook's own working directory - and a session
   started inside any project got a false "different project" note (it also failed CI on Linux/macOS).
