@@ -16,7 +16,9 @@ dates are ISO 8601.
   `anthropics/skills`). `CAUTION` only warns. `--allow-skill=<name>` silences a skill and restores it
   from quarantine; `--scan-llm=on` adds SkillSpector's LLM analysis to the default static (`--no-llm`)
   scan. Both are remembered in `config.json` (`skillscan`). Verdicts, failed scans included, are
-  cached per content hash, scanner version and mode. SkillSpector is optional (Python 3.12+,
+  cached per content hash, scanner version and mode; new or changed skills are scanned in parallel (up
+  to 8 at a time: a first scan of 12 skills took 21 s instead of 78 s), and each outcome is reported in
+  one summary line instead of a line per skill. SkillSpector is optional (Python 3.12+,
   `uv tool install`): without it skills are linked unscanned with a warning.
 - JEV through OpenRouter: an OpenRouter key (`--jev-token=sk-or-...` or `--openrouter-key=...`, or
   `JEV_OPENROUTER_API_KEY`) reaches JEV's System One API on OpenRouter (model `jev-1.13`). A TypeSafe

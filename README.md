@@ -172,7 +172,7 @@ data exfiltration, privilege escalation, supply-chain risks, …) and acts on it
 | Verdict | Risk | Action |
 | --- | --- | --- |
 | `SAFE` | 0–20 | linked |
-| `CAUTION` | 21–50 | linked, with a warning and the command to review it |
+| `CAUTION` | 21–50 | linked, named in one summary warning with the command to review it |
 | `DO_NOT_INSTALL` | 51–100 | you are asked (default: no) whether to quarantine it; unattended runs (`--yes`, no terminal) only warn |
 
 **Quarantine** moves the skill folder from `~/.skills/<name>` to `~/.jev-router/quarantine/<name>`:
@@ -194,7 +194,9 @@ and its LLM meta-analysis did not change those verdicts.
   working provider the static verdict is used and not cached.
 * **Cache:** a verdict – a failed scan too – is kept per skill content hash, SkillSpector version and
   scan mode (`~/.jev-router/state/skillscan.json`), so only new or changed skills are scanned again.
-  A first scan takes seconds per skill, minutes for a large one (timeout: 10 min static, 30 min with LLM).
+  A first scan takes seconds per skill, minutes for a large one (timeout: 10 min static, 30 min with LLM);
+  new or changed skills are scanned in parallel, up to 8 at a time (half the CPU cores), which makes
+  a first scan of a large hub several times faster. Each outcome is reported in one summary line.
 * **Scope:** skills bundled with trirouter (`jev_router/skills/`) and app-managed skills (Claude
   desktop, plugins, Codex built-ins) are not scanned.
 * **Optional:** SkillSpector needs Python 3.12+ and runs as its own tool:

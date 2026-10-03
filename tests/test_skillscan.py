@@ -53,7 +53,8 @@ def test_do_not_install_is_quarantined_on_yes_and_caution_is_linked(tmp_path, sc
     assert not (hub_dir / "evil").exists() and (skillscan.QUARANTINE / "evil" / "SKILL.md").is_file()
     assert all((hub_dir / n).is_dir() for n in ("risky", "fine", "broken"))
     out = capsys.readouterr().out
-    assert "risky: CAUTION" in out and "broken: scan failed" in out
+    assert "1 CAUTION, linked: risky (40)" in out and "1 scan failed" in out and "broken (exit 2: unreadable)" in out
+    assert "quarantined: evil" in out and "fine" not in out
 
 
 def test_unattended_run_only_warns(tmp_path, scans, capsys):
@@ -61,7 +62,8 @@ def test_unattended_run_only_warns(tmp_path, scans, capsys):
     assert skillscan.gate(make_skills(hub_dir, "evil"), apply_act, apply=True) == set()
     assert (hub_dir / "evil").is_dir() and not skillscan.QUARANTINE.exists()
     out = capsys.readouterr().out
-    assert "evil: DO_NOT_INSTALL" in out and "unknown verdict" not in out
+    assert "1 DO_NOT_INSTALL, linked - decide in an interactive" in out and "evil (100)" in out
+    assert "unknown verdict" not in out
 
 
 def test_dry_run_moves_nothing(tmp_path, scans):
@@ -101,12 +103,44 @@ def test_cache_skips_unchanged_skills_and_failed_scans(tmp_path, scans):
     skills = make_skills(hub_dir, "fine", "broken")
     skillscan.gate(skills, apply_act, apply=True)
     skillscan.gate(skills, apply_act, apply=True)
-    assert scans == ["fine", "broken"]
+    assert sorted(scans) == ["broken", "fine"]
     (hub_dir / "fine" / "run.py").write_text("print(1)\n", encoding="utf-8")
     skillscan.gate(skills, apply_act, apply=True, llm=False)
     assert scans[2:] == ["fine"]
     skillscan.gate(skills, apply_act, apply=True, llm=True)
-    assert scans[3:] == ["fine", "broken"]
+    assert sorted(scans[3:]) == ["broken", "fine"]
+
+
+def test_new_skills_are_scanned_in_parallel_and_reported_once_per_outcome(tmp_path, scans, monkeypatch, capsys):
+    import threading
+    import time
+    running, peak, lock = [0], [0], threading.Lock()
+
+    def slow(exe, skill_dir, llm):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        time.sleep(0.05)
+        with lock:
+            running[0] -= 1
+        return dict(REPORTS["risky"], llm_available=False)
+    monkeypatch.setattr(skillscan, "run_scan", slow)
+    monkeypatch.setattr(skillscan, "WORKERS", 3)
+    skills = make_skills(tmp_path / ".skills", *(f"s{i}" for i in range(6)))
+    assert skillscan.gate(skills, apply_act, apply=True) == set()
+    assert peak[0] == 3
+    out = capsys.readouterr().out
+    assert "6 new or changed skill(s), 3 at a time" in out
+    assert out.count("CAUTION") == 1 and "s0 (40), s1 (40)" in out
+    assert set(skillscan.load_cache()) == {f"s{i}" for i in range(6)}
+
+
+def test_a_cached_run_scans_nothing(tmp_path, scans, capsys):
+    skills = make_skills(tmp_path / ".skills", "fine", "risky")
+    skillscan.gate(skills, apply_act, apply=True)
+    capsys.readouterr()
+    skillscan.gate(skills, apply_act, apply=True)
+    assert len(scans) == 2 and "new or changed" not in capsys.readouterr().out
 
 
 def test_llm_mode_without_provider_falls_back_to_static_uncached(tmp_path, scans, monkeypatch, capsys):

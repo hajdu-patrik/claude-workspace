@@ -14,8 +14,10 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import platforms as P
@@ -27,6 +29,7 @@ EXE = "skillspector"
 INSTALL_HINT = "uv tool install git+https://github.com/NVIDIA/skillspector.git"
 SAFE, CAUTION, BLOCK = "SAFE", "CAUTION", "DO_NOT_INSTALL"
 TIMEOUT_S = {False: 600, True: 1800}  # static / with LLM analysis; large skills take minutes
+WORKERS = max(1, min(8, (os.cpu_count() or 2) // 2))  # parallel scans; each one is a CPU-bound process
 _SKIP_PARTS = {".git", "__pycache__", "node_modules"}
 
 
@@ -103,19 +106,47 @@ def save_cache(cache):
     CACHE.write_text(json.dumps(cache, indent=1, sort_keys=True), encoding="utf-8")
 
 
-def verdict(skill_dir, exe, version, llm, cache):
-    """Cached per content hash, scanner version and scan mode, failed scans too (no retry until a change)."""
-    key = f"{fingerprint(skill_dir)}:{version}:{'llm' if llm else 'static'}"
-    hit = cache.get(Path(skill_dir).name)
-    if hit and hit.get("key") == key:
-        return dict(hit["result"], accepted=hit.get("accepted", False))
+def _scan(exe, skill_dir, llm):
+    """(result, cacheable): a static fallback for a missing LLM provider is not cached."""
     result = run_scan(exe, skill_dir, llm)
     if llm and "error" not in result and not result.get("llm_available"):
         print(f"[WARN] skillscan: {Path(skill_dir).name}: LLM analysis unavailable (check SKILLSPECTOR_PROVIDER "
-              "and its key) - static verdict used, not cached")
-        return run_scan(exe, skill_dir, False)
-    cache[Path(skill_dir).name] = {"key": key, "result": result}
-    return result
+              "and its key) - static verdict used, not cached", flush=True)
+        return run_scan(exe, skill_dir, False), False
+    return result, True
+
+
+def _progress(done, total):
+    if P.is_terminal(sys.stdout):
+        print(f"\r  scanned {done}/{total}", end="\n" if done == total else "", flush=True)
+
+
+def verdicts(skills, exe, version, llm, cache):
+    """{name: result}, cached per content hash, scanner version and scan mode, failed scans too (no retry
+    until a change). Each scan is its own process, so new or changed skills are scanned WORKERS at a time."""
+    out, todo = {}, []
+    for s in skills:
+        key = f"{fingerprint(s)}:{version}:{'llm' if llm else 'static'}"
+        hit = cache.get(s.name)
+        if hit and hit.get("key") == key:
+            out[s.name] = dict(hit["result"], accepted=hit.get("accepted", False))
+        else:
+            todo.append((s, key))
+    if not todo:
+        return out
+    workers = max(1, min(WORKERS, len(todo)))
+    print(f"skillscan: scanning {len(todo)} new or changed skill(s), {workers} at a time", flush=True)
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_scan, exe, s, llm): (s, key) for s, key in todo}
+        for done, future in enumerate(as_completed(futures), 1):
+            (s, key), (result, cacheable) = futures[future], future.result()
+            out[s.name] = result
+            if cacheable:
+                cache[s.name] = {"key": key, "result": result}
+            _progress(done, len(todo))
+    print(f"skillscan: scanned in {time.monotonic() - started:.0f} s")
+    return out
 
 
 def _quarantine_dest(name):
@@ -134,24 +165,30 @@ def restore_allowed(hub, allow, act):
             act(f"skillscan: restore allowed skill {src} -> {hub / name}", lambda s=src: shutil.move(str(s), str(hub / name)))
 
 
-def _blocked(s, r, act, confirm, cache):
-    """True when the user chose quarantine; confirm() is None when nobody can be asked."""
-    head = f"skillscan: {s.name}: {BLOCK} (risk {r.get('score')}, max {r.get('max_severity')})"
+def _decide(s, r, act, confirm, cache):
+    """A DO_NOT_INSTALL skill: "kept earlier", "unasked" (confirm() is None: nobody to ask), "kept" or "quarantined"."""
     if r.get("accepted"):
-        print(f"[WARN] {head} - linked, kept by you earlier")
-        return False
+        return "kept earlier"
+    head = f"skillscan: {s.name}: {BLOCK} (risk {r.get('score')}, max {r.get('max_severity')})"
     answer = confirm(f"  {head}. Review: {EXE} scan \"{s}\"\n  Move it to quarantine (linked nowhere)?")
     if answer is None:
-        print(f"[WARN] {head} - linked; asked only in an interactive run that applies changes")
-        return False
+        return "unasked"
     if not answer:
         cache.get(s.name, {})["accepted"] = True
-        print(f"[WARN] {head} - linked, kept by you (asked again only if it changes)")
-        return False
+        return "kept"
     dest = _quarantine_dest(s.name)
     act(f"{head} - quarantine -> {dest}",
         lambda: (QUARANTINE.mkdir(parents=True, exist_ok=True), shutil.move(str(s), str(dest))))
-    return True
+    return "quarantined"
+
+
+# one summary line per outcome instead of a line per skill: a large hub has dozens of CAUTION verdicts
+_SUMMARY = (("unasked", f"{BLOCK}, linked - decide in an interactive `python install.py skills --apply`"),
+            ("kept", f"{BLOCK}, linked - kept by you (asked again only if it changes)"),
+            ("kept earlier", f"{BLOCK}, linked - kept by you earlier"),
+            ("allowed", f"{BLOCK}, linked - allowed in config"),
+            (CAUTION, f"{CAUTION}, linked"),
+            ("failed", "scan failed, linked unscanned until they change"))
 
 
 def gate(skills, act, apply, llm=False, allow=(), confirm=lambda question: None):
@@ -169,24 +206,33 @@ def gate(skills, act, apply, llm=False, allow=(), confirm=lambda question: None)
         print(f"[WARN] skillscan: SkillSpector does not start ({version}) - {len(skills)} skill(s) linked "
               f"unscanned.{hint}")
         return set()
-    cache, blocked = load_cache(), set()
+    cache = load_cache()
     print(f"skillscan: SkillSpector {version}, {'static + LLM' if llm else 'static'} analysis of {len(skills)} skill(s)")
+    results, groups = verdicts(skills, exe, version, llm, cache), {}
     for s in skills:
-        r = verdict(s, exe, version, llm, cache)
+        r = results[s.name]
         rec, score = r.get("recommendation"), r.get("score")
         if "error" in r:
-            print(f"[WARN] skillscan: {s.name}: scan failed ({r['error']}) - linked unscanned until it changes")
-        elif rec == BLOCK and s.name in allow:
-            print(f"[WARN] skillscan: {s.name}: {BLOCK} (risk {score}) - linked anyway, allowed in config")
+            outcome, label = "failed", f"{s.name} ({r['error']})"
         elif rec == BLOCK:
-            if _blocked(s, r, act, confirm, cache):
-                blocked.add(s.name)
+            outcome = "allowed" if s.name in allow else _decide(s, r, act, confirm, cache)
+            label = f"{s.name} ({score})"
         elif rec == CAUTION:
-            print(f"[WARN] skillscan: {s.name}: {CAUTION} (risk {score}) - linked; review it: {EXE} scan \"{s}\"")
-        elif rec != SAFE:
-            print(f"[WARN] skillscan: {s.name}: unknown verdict {rec!r} - linked")
+            outcome, label = CAUTION, f"{s.name} ({score})"
+        elif rec == SAFE:
+            continue
+        else:
+            outcome, label = "unknown", f"{s.name} ({rec!r})"
+        groups.setdefault(outcome, []).append(label)
+    for outcome, text in _SUMMARY + (("unknown", "unknown verdict, linked"),):
+        if groups.get(outcome):
+            print(f"[WARN] skillscan: {len(groups[outcome])} {text}: {', '.join(groups[outcome])}")
+    if groups.get(CAUTION) or groups.get("unasked"):
+        print(f"  Review one: {EXE} scan \"{skills[0].parent / '<name>'}\"")
+    blocked = {label.split(" (")[0] for label in groups.get("quarantined", [])}
     if blocked:
-        print(f"skillscan: {len(blocked)} skill(s) quarantined; restore one with --allow-skill=<name>")
+        print(f"skillscan: {len(blocked)} skill(s) quarantined: {', '.join(sorted(blocked))}; "
+              "restore one with --allow-skill=<name>")
     if apply:
         save_cache(cache)
     return blocked
