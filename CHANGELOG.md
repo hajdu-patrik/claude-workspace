@@ -51,6 +51,9 @@ dates are ISO 8601.
 - Removed `gpt-5.4` from the Codex catalog (dropped from Codex's bundled catalogs in 0.158).
 
 ### Fixed
+- A go-ahead is answered in its own language: "Mehet" after a prompt that was only a pasted English
+  block asked for an English reply, because a continuation kept the previous language. A go-ahead
+  with Hungarian or English words now sets the language; an ambiguous one ("ok", "lgtm") keeps it.
 - Skill scan: a SkillSpector that does not start (e.g. a uv trampoline under a packaged Windows
   Python that cannot see `%APPDATA%`) now gives one warning with the reason and a `UV_TOOL_DIR` hint,
   and links skills unscanned, instead of caching a failed scan for every skill.

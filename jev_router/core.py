@@ -83,6 +83,16 @@ GO_AHEAD_FILLER = {
 STATUS_RE = re.compile(r"^(hogy allunk|hol tartunk|mi a helyzet|kesz vagy|kesz van|elkeszult|megvan|"
                        r"how is it going|how's it going|how are we doing|any progress|are you done|status)\b")
 CONTINUATION_MAX_WORDS = 5
+# A go-ahead in one language is answered in it ("Mehet" after an English paste); "ok" keeps the previous language.
+CONTINUATION_LANG_WORDS = {
+    "hu": {"mehet", "mehetsz", "mehetunk", "igen", "rendben", "persze", "jo", "johet", "nyomjad", "nyomd", "nyomj",
+           "csinald", "folytasd", "folytassuk", "folytatas", "kovetkezo", "kovi", "hajra", "tovabb", "lehet", "tessek",
+           "pontosan", "szuper", "koszi", "koszonom", "kerlek", "akkor", "meg", "csak", "most", "mind", "mindet",
+           "mindent", "nyugodtan", "ujra", "hogy", "allunk", "hol", "tartunk", "helyzet", "kesz", "elkeszult", "megvan"},
+    "en": {"yes", "yeah", "yep", "yup", "sure", "go", "continue", "proceed", "next", "retry", "please", "thanks",
+           "great", "perfect", "done", "try", "do", "ahead", "again", "then", "keep", "going", "how", "progress",
+           "status", "are", "you", "doing"},
+}
 
 
 def is_continuation(prompt):
@@ -99,6 +109,13 @@ def is_continuation(prompt):
     if words[0] not in GO_AHEAD:
         return False
     return len([w for w in words[1:] if w not in GO_AHEAD_FILLER and w not in GO_AHEAD]) <= 1
+
+
+def continuation_lang(prompt, previous_lang):
+    words = re.findall(r"[a-z0-9']+", _norm(split_pasted(prompt)[0]))
+    votes = {code: sum(w in vocab for w in words) for code, vocab in CONTINUATION_LANG_WORDS.items()}
+    hu, en = votes["hu"], votes["en"]
+    return previous_lang if hu == en else ("hu" if hu > en else "en")
 
 
 def continued_decision(previous, lang_code):
@@ -718,7 +735,7 @@ def route(prompt, provider, backend=None, session_model=None, previous=None):
         return d, render(d, regex_hit, targets, provider, lang_code, models, session_model), regex_hit, None
 
     if previous and is_continuation(prompt):
-        d = continued_decision(previous, previous.get("lang") or lang_code)
+        d = continued_decision(previous, continuation_lang(prompt, previous.get("lang") or lang_code))
         return d, render(d, regex_hit, targets, provider, d["lang"], models, session_model), regex_hit, None
 
     candidates = catalog.prefilter(own, catalog.load_catalog(), SKILL_CANDIDATES)

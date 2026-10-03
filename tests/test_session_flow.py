@@ -53,6 +53,22 @@ def test_go_ahead_keeps_the_previous_decision(tmp_path, monkeypatch, capsys):
     assert "continues the previous request" in text
 
 
+@pytest.mark.parametrize("prompt, previous, expected", [
+    ("Mehet", "en", "hu"), ("Csináld!", "en", "hu"), ("igen, mindent", "en", "hu"), ("hogy állunk?", "en", "hu"),
+    ("yes, do it", "hu", "en"), ("go ahead", "hu", "en"), ("ok", "en", "en"), ("ok", "hu", "hu"), ("lgtm", "en", "en"),
+])
+def test_continuation_answers_in_the_go_aheads_own_language(prompt, previous, expected):
+    assert core.continuation_lang(prompt, previous) == expected
+
+
+def test_go_ahead_after_a_pasted_english_block_switches_to_hungarian(tmp_path, monkeypatch, capsys):
+    paste = '<pasted_content id="1">Steps for the remote session: apply the patch, run the tests and push to main.</pasted_content id="1">'
+    hook(monkeypatch, capsys, "UserPromptSubmit", {"prompt": paste, "session_id": "p", "cwd": "/w"})
+    assert last_log(tmp_path)["lang"] == "en"
+    text = hook(monkeypatch, capsys, "UserPromptSubmit", {"prompt": "Mehet", "session_id": "p", "cwd": "/w"})
+    assert last_log(tmp_path)["backend"] == "continuation" and "Respond in Hungarian." in text
+
+
 def test_go_ahead_without_history_is_routed_normally(tmp_path, monkeypatch, capsys):
     hook(monkeypatch, capsys, "UserPromptSubmit", {"prompt": "mehet", "session_id": "fresh", "cwd": "/w"})
     assert last_log(tmp_path)["backend"] == "local"
