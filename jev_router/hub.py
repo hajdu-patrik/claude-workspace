@@ -11,6 +11,9 @@
     ~/.codex/agents/<name>.toml + [agents.*]      Codex roles
     ~/.gemini/config/agents/<name>/agent.md       Antigravity subagents
 
+Third-party hub skills pass the SkillSpector gate first (skillscan.py): a DO_NOT_INSTALL skill the
+user sends to ~/.jev-router/quarantine/ is linked nowhere.
+
 One link per skill, not one for the whole folder: ~/.claude/skills also holds app-managed content,
 and a fully linked skills directory is a known Claude Code regression. Never deletes a real
 directory: only links it can prove it owns are replaced, and a name collision is only reported.
@@ -23,7 +26,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import catalog, platforms as P
+from . import catalog, platforms as P, skillscan
 
 PKG = Path(__file__).resolve().parent
 REPO = PKG.parent
@@ -46,6 +49,8 @@ GEN_MARK = "generated-by: jev-router"
 TOML_BEGIN, TOML_END = "# >>> jev-router agents (generated - edit jev_router/config/targets.json, not this block)", "# <<< jev-router agents"
 
 APPLY = False
+SCAN = {"llm": False, "allow": ()}  # skillscan settings, set by the installer from config.json + flags
+CONFIRM = lambda question: None  # noqa: E731 - the installer's yes/no prompt; None: nobody to ask
 
 
 def act(msg, fn=None):
@@ -145,18 +150,27 @@ def cmd_migrate():
 def cmd_link():
     for d in repo_skills():
         ensure_link(HUB / d.name, d, f"hub <- repo '{d.name}'")
-    names = _link_hub_skills()
+    names = _link_hub_skills(_scan_hub_skills())
     _drop_stale_links(names)
     if "antigravity" in PROVIDERS:
         _register_hub_with_antigravity()
 
 
-def _link_hub_skills():
+def _scan_hub_skills():
+    """Bundled skills ship with trirouter and are reviewed in this repository, so only the others are scanned."""
+    skillscan.restore_allowed(HUB, SCAN.get("allow", ()), act)
+    bundled = target_of(REPO_SKILLS)
+    third_party = [s for s in hub_skills() if bundled is None or bundled not in (target_of(s) or s).parents]
+    return skillscan.gate(third_party, act, APPLY, llm=SCAN.get("llm", False), allow=SCAN.get("allow", ()),
+                          confirm=CONFIRM if APPLY else lambda question: None)
+
+
+def _link_hub_skills(blocked=frozenset()):
     names = set()
     # a dry run has not linked the repo skills into the hub yet: plan their tool links too
     pending = [] if APPLY else [HUB / d.name for d in repo_skills()]
     for s in hub_skills() + pending:
-        if s.name in names:
+        if s.name in names or s.name in blocked:
             continue
         names.add(s.name)
         if "claude" in PROVIDERS:

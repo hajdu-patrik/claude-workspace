@@ -7,7 +7,7 @@
     python install.py detect          report which AI tools are installed and logged in
     python install.py models --probe  test which Codex/Antigravity models your accounts can use
     python install.py remote [--name "My PC"] [--workdir <folder>] [--remove]   phone / other-device access
-    python install.py skills [--apply]  re-link skills, regenerate workers, rebuild the catalog
+    python install.py skills [--apply]  scan + re-link skills, regenerate workers, rebuild the catalog
     python install.py doctor          read-only health report
     python install.py uninstall       remove hooks, MCP entries and remote access (skills stay)
     python install.py route [--provider claude] [--json] <prompt text...>
@@ -19,13 +19,16 @@ the installer's shim: python ~/.jev-router/bin/route.py --json "<text>"
 
 Options: --providers=claude,codex,antigravity  --jev-token=<TypeSafe token or OpenRouter key>
          --openrouter-key=<key>  --remote[=<name>]  --no-migrate
+         --allow-skill=<name,...>  never ask about these skills; restore them from quarantine (remembered)
+         --scan-llm=on|off         add SkillSpector's LLM analysis to the static scan (remembered)
 
 Steps of the interactive setup:
   1. detect Claude Code, Codex and Antigravity (installed? logged in?) and help you log in
   2. JEV / TypeSafe token (optional - without it the built-in local model decides)
   3. hooks + MCP server for every logged-in tool
-  4. shared skill folder ~/.skills: existing skills moved there and linked into every tool;
-     worker agents generated for every available model x effort
+  4. shared skill folder ~/.skills: existing skills moved there, scanned with SkillSpector when it
+     is installed (DO_NOT_INSTALL -> asks: quarantine?) and linked into every tool; worker agents
+     generated for every available model x effort
   5. optional: remote access and speech-to-text
 Requires Python 3.10+ and nothing else.
 """
@@ -45,7 +48,8 @@ CONFIG = STATE / "config.json"
 MODELS_LOCAL = STATE / "models.local.json"
 ALL = ("claude", "codex", "antigravity")
 
-VALUE_FLAGS = ("--name", "--providers", "--jev-token", "--openrouter-key", "--remote", "--workdir")
+VALUE_FLAGS = ("--name", "--providers", "--jev-token", "--openrouter-key", "--remote", "--workdir", "--allow-skill",
+               "--scan-llm")
 
 
 def parse_args(argv):
@@ -190,12 +194,29 @@ def configure_jev(cfg):
     say("  Backend: " + jev_backend_label(cfg))
 
 
-def connect(providers):
+def scan_settings(cfg, persist):
+    """config.json's skillscan block plus --allow-skill / --scan-llm; flags are saved only when applying."""
+    sc = dict(cfg.get("skillscan") or {})
+    names = FLAGS.get("--allow-skill")
+    if isinstance(names, str):
+        sc["allow"] = sorted(set(sc.get("allow") or []) | {n.strip() for n in names.split(",") if n.strip()})
+    llm = FLAGS.get("--scan-llm")
+    if isinstance(llm, str):
+        sc["llm"] = llm.strip().lower() in ("on", "1", "true", "yes")
+    if persist and sc != (cfg.get("skillscan") or {}):
+        cfg["skillscan"] = sc
+        save_config(cfg)
+    hub.SCAN = {"llm": bool(sc.get("llm")), "allow": tuple(sc.get("allow") or ())}
+    hub.CONFIRM = lambda question: ask(question, "n") if interactive() and not YES else None
+
+
+def connect(providers, cfg):
     say("\n== 3/5  Hooks + MCP server")
     integrations.install(providers, apply=not DRY)
     say("\n== 4/5  Shared skill folder (~/.skills) and worker agents")
     hub.PROVIDERS = tuple(providers)
     hub.APPLY = not DRY
+    scan_settings(cfg, persist=not DRY)
     if "--no-migrate" not in FLAGS:
         hub.APPLY = False
         say("  Skills that would move into ~/.skills (each replaced by a link, so every tool keeps it):")
@@ -286,6 +307,7 @@ def run_skills():
     found = P.detect(deep=False)
     hub.PROVIDERS = tuple(p for p, i in found.items() if i["installed"])
     hub.APPLY = "--apply" in FLAGS
+    scan_settings(load_config(), persist=hub.APPLY)
     hub.cmd_link()
     hub.cmd_agents()
     if hub.APPLY:
@@ -396,7 +418,7 @@ def run_setup():
     cfg = load_config()
     configure_jev(cfg)
     save_config(cfg)
-    connect(providers)
+    connect(providers, cfg)
     extras(providers, load_config() if not DRY else cfg)
     next_steps(providers)
     return 0

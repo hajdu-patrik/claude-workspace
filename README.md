@@ -49,8 +49,10 @@ The installer walks you through five steps:
 2. **JEV access** – paste a TypeSafe token or an OpenRouter key (`sk-or-…`), or press Enter to use the
    built-in local classifier.
 3. **Hooks + MCP server** for every logged-in tool.
-4. **Shared skill folder** `~/.skills` – existing skills of every tool are moved there and linked
-   back, so each tool sees all of them; worker agents are generated for every model × effort.
+4. **Shared skill folder** `~/.skills` – existing skills of every tool are moved there, scanned with
+   [SkillSpector](#skill-security-scan-skillspector) when it is installed (a risky one can be
+   quarantined), and linked back, so each
+   tool sees all of them; worker agents are generated for every model × effort.
 5. **Optional extras** – remote access from your phone, speech-to-text.
 
 Every change is shown first, changed config files get a `.bak` copy, and re-running is safe.
@@ -62,7 +64,7 @@ Preview without changing anything: `python install.py --dry-run`.
 | `python install.py models --probe` | test which models your accounts may use (stored per user) |
 | `python install.py remote --name "My PC" [--workdir <folder>]` | remote access from other devices ([guide](docs/remote-access.md)) |
 | `python install.py uninstall` | remove hooks, MCP entries and remote access (skills stay) |
-| `python install.py skills [--apply]` | re-link skills, regenerate workers, rebuild the catalog |
+| `python install.py skills [--apply] [--allow-skill=<name>] [--scan-llm=on\|off]` | scan + re-link skills, regenerate workers, rebuild the catalog |
 | `python install.py doctor` | health report |
 | `python install.py route [--provider claude] [--json] <text>` | routing decision for one prompt or sub-task, side-effect free ([details](#routing-decision-on-demand)) |
 
@@ -161,6 +163,44 @@ model really started, so you can see how often it followed the router's advice.
 manage themselves (Claude desktop's synced skills, plugins, Codex built-ins) stay in place but are
 indexed too, so the router can hand a skill of one tool to another ("read and follow `<path>/SKILL.md`").
 
+### Skill security scan (SkillSpector)
+
+Before a skill in `~/.skills` is linked into any tool, the installer (`setup` step 4 and `skills`)
+scans it with NVIDIA's [SkillSpector](https://github.com/NVIDIA/SkillSpector) (prompt injection,
+data exfiltration, privilege escalation, supply-chain risks, …) and acts on its recommendation:
+
+| Verdict | Risk | Action |
+| --- | --- | --- |
+| `SAFE` | 0–20 | linked |
+| `CAUTION` | 21–50 | linked, with a warning and the command to review it |
+| `DO_NOT_INSTALL` | 51–100 | you are asked (default: no) whether to quarantine it; unattended runs (`--yes`, no terminal) only warn |
+
+**Quarantine** moves the skill folder from `~/.skills/<name>` to `~/.jev-router/quarantine/<name>`:
+nothing is deleted, but no tool sees it any more – its links are removed, it leaves the catalog, and
+Antigravity (which reads the whole hub) no longer finds it. Answering "no" keeps the skill linked and
+is remembered for exactly that content: you are asked again only when the skill changes.
+
+Why ask instead of blocking: in a test on the 19 skills of
+[anthropics/skills](https://github.com/anthropics/skills), SkillSpector 2.12 rated 7 legitimate ones
+`DO_NOT_INSTALL` (`docx`, `xlsx`, `pptx`, `mcp-builder`, `skill-creator`, `webapp-testing`,
+`claude-api`) – scripts that call `subprocess` or read files look like exfiltration to static analysis,
+and its LLM meta-analysis did not change those verdicts.
+
+* **Override:** `--allow-skill=<name>[,<name>]` never asks about these skills and restores them from
+  quarantine; the list is remembered in `config.json` (`skillscan.allow`).
+* **Static by default:** the scan runs with `--no-llm`, so no skill content leaves the machine.
+  `--scan-llm=on` (remembered as `skillscan.llm`) adds SkillSpector's LLM analysis, configured through
+  its own variables (`SKILLSPECTOR_PROVIDER`, e.g. `claude_cli`, and that provider's key). Without a
+  working provider the static verdict is used and not cached.
+* **Cache:** a verdict – a failed scan too – is kept per skill content hash, SkillSpector version and
+  scan mode (`~/.jev-router/state/skillscan.json`), so only new or changed skills are scanned again.
+  A first scan takes seconds per skill, minutes for a large one (timeout: 10 min static, 30 min with LLM).
+* **Scope:** skills bundled with trirouter (`jev_router/skills/`) and app-managed skills (Claude
+  desktop, plugins, Codex built-ins) are not scanned.
+* **Optional:** SkillSpector needs Python 3.12+ and runs as its own tool:
+  `uv tool install git+https://github.com/NVIDIA/skillspector.git`. Without it, or when a scan fails,
+  skills are linked unscanned with a warning.
+
 ### Overrides
 
 Claude `#fable #sonnet #opus #codex #antigravity` · Codex / Antigravity `#fast #main #deep` ·
@@ -207,7 +247,8 @@ starting its remote service at logon. See **[docs/remote-access.md](docs/remote-
 | Setting | Where |
 | --- | --- |
 | JEV access | `python install.py --jev-token=<TypeSafe token or OpenRouter key>`, or the environment variable `TYPESAFE_API_KEY` / `JEV_OPENROUTER_API_KEY`. The generic `OPENROUTER_API_KEY` is ignored on purpose: another tool's key must not start spending credit on routing. |
-| Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `bin/` (shims `run_hook.py`, `mcp_server.py`, `route.py`) |
+| Per-user state | `~/.jev-router/` – `config.json`, `models.local.json`, `logs/`, `state/`, `quarantine/` (skills you quarantined), `bin/` (shims `run_hook.py`, `mcp_server.py`, `route.py`) |
+| Skill scan | `config.json` → `skillscan`: `allow` (skills never asked about despite `DO_NOT_INSTALL`), `llm` (add the LLM analysis); set with `--allow-skill` / `--scan-llm` |
 | Model catalog, tiers, routing table | `jev_router/config/models.json`, `targets.json`, `routes.json` |
 
 | Environment variable | Default | Meaning |
@@ -238,6 +279,7 @@ jev_router/                the package
 ├── queue_state.py         queue protection
 ├── mcp_server.py          MCP server: route_prompt, list_skills, get_skill (python -m jev_router.mcp_server)
 ├── hub.py                 shared skill folder, links, worker generation
+├── skillscan.py           SkillSpector gate: scan, cache, quarantine before skills are linked
 ├── integrations.py        hook + MCP registration per tool, ~/.jev-router/bin shims
 ├── platforms.py           OS abstraction (paths, links, executables, detection)
 ├── remote.py              optional remote access

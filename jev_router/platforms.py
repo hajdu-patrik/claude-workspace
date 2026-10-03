@@ -89,6 +89,8 @@ def find_exe(name):
         candidates = [HOME / ".local" / "bin" / "agy", HOME / ".agy" / "bin" / "agy"]
         if IS_WINDOWS and os.environ.get("LOCALAPPDATA"):
             candidates.insert(0, Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "agy.exe")
+    elif name == "skillspector":  # `uv tool install` default bin folder
+        candidates = [HOME / ".local" / "bin" / ("skillspector.exe" if IS_WINDOWS else "skillspector")]
     elif name == "claude":
         candidates = [HOME / ".local" / "bin" / ("claude.exe" if IS_WINDOWS else "claude"), CLAUDE_HOME / "local" / "claude"]
     for c in candidates:

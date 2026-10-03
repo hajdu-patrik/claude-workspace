@@ -8,6 +8,16 @@ dates are ISO 8601.
 ## [Unreleased]
 
 ### Added
+- Skill security scan with NVIDIA [SkillSpector](https://github.com/NVIDIA/SkillSpector): `setup`
+  (step 4) and `skills` scan every third-party skill in `~/.skills` before it is linked into a tool.
+  On `DO_NOT_INSTALL` you are asked (default: no) whether to move it to `~/.jev-router/quarantine/`
+  (linked nowhere, left out of the catalog); a "no" is remembered until the skill changes, and
+  unattended runs only warn, because static analysis also flags legitimate skills (7 of the 19
+  `anthropics/skills`). `CAUTION` only warns. `--allow-skill=<name>` silences a skill and restores it
+  from quarantine; `--scan-llm=on` adds SkillSpector's LLM analysis to the default static (`--no-llm`)
+  scan. Both are remembered in `config.json` (`skillscan`). Verdicts, failed scans included, are
+  cached per content hash, scanner version and mode. SkillSpector is optional (Python 3.12+,
+  `uv tool install`): without it skills are linked unscanned with a warning.
 - JEV through OpenRouter: an OpenRouter key (`--jev-token=sk-or-...` or `--openrouter-key=...`, or
   `JEV_OPENROUTER_API_KEY`) reaches JEV's System One API on OpenRouter (model `jev-1.13`). A TypeSafe
   token still wins when both exist. The generic `OPENROUTER_API_KEY` is ignored on purpose, so another
