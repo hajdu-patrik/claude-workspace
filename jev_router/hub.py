@@ -89,7 +89,24 @@ def owned(link):
         # path containment, not a string prefix: ~/.skills-old is not inside ~/.skills
         if base is not None and (t == base or base in t.parents):
             return True
-    return False
+    return _bundled_in_other_checkout(t)
+
+
+def _norm_parts(path):
+    return tuple(os.path.normcase(x) for x in Path(path).parts)
+
+
+_SKILLS_TAIL = ("jev_router", "skills")
+
+
+def _is_checkout_skills_dir(path):
+    """<anything>/jev_router/skills, by path components."""
+    return _norm_parts(path)[-2:] == tuple(os.path.normcase(x) for x in _SKILLS_TAIL)
+
+
+def _bundled_in_other_checkout(t):
+    """A link into another checkout (a moved clone): <any>/jev_router/skills/<one of our bundled skills>."""
+    return _is_checkout_skills_dir(t.parent) and REPO_SKILLS.is_dir() and (REPO_SKILLS / t.name).is_dir()
 
 
 def ensure_link(link, target, label):
@@ -203,7 +220,9 @@ def _register_hub_with_antigravity():
     hub_path = str(HUB).replace("\\", "/")
     # The repo's skills/ is listed too: agy does not follow directory junctions inside an entry.
     kept = [e for e in entries if e.get("path") not in (repo_path, "~/.skills", hub_path)
-            and Path(os.path.expanduser(str(e.get("path", "")))).exists()]
+            and Path(os.path.expanduser(str(e.get("path", "")))).exists()
+            and not (_is_checkout_skills_dir(str(e.get("path", "")))
+                     and _norm_parts(e.get("path", "")) != _norm_parts(repo_path))]
     new_entries = kept + [{"path": hub_path}, {"path": repo_path}]
     if new_entries != entries:
         cfg["entries"] = new_entries

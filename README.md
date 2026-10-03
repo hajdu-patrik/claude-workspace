@@ -200,6 +200,12 @@ and its LLM meta-analysis did not change those verdicts.
 * **Optional:** SkillSpector needs Python 3.12+ and runs as its own tool:
   `uv tool install git+https://github.com/NVIDIA/skillspector.git`. Without it, or when a scan fails,
   skills are linked unscanned with a warning.
+* **Windows:** a packaged Python (Python install manager / Microsoft Store) does not see uv's default
+  tool folder under `%APPDATA%`, so `skillspector` fails to start ("uv trampoline failed to
+  canonicalize script path"); the installer then warns once and links skills unscanned. Reinstall with
+  `UV_TOOL_DIR` set outside AppData (e.g. `%USERPROFILE%\.local\share\uv\tools`):
+  `uv tool install --force git+https://github.com/NVIDIA/skillspector.git` – and use the same
+  `UV_TOOL_DIR` for `uv tool upgrade`.
 
 ### Overrides
 

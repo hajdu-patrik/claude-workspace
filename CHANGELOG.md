@@ -49,6 +49,12 @@ dates are ISO 8601.
 - Removed `gpt-5.4` from the Codex catalog (dropped from Codex's bundled catalogs in 0.158).
 
 ### Fixed
+- Skill scan: a SkillSpector that does not start (e.g. a uv trampoline under a packaged Windows
+  Python that cannot see `%APPDATA%`) now gives one warning with the reason and a `UV_TOOL_DIR` hint,
+  and links skills unscanned, instead of caching a failed scan for every skill.
+- Links into a previous checkout (`<old>/jev_router/skills/<bundled skill>`) are re-pointed to the
+  current checkout instead of being skipped as foreign; Antigravity's `skills.json` drops another
+  checkout's `jev_router/skills` entry.
 - Antigravity in plan mode was never routed: agy stores the prompt as `/plan <prompt>`, which the hook
   took for a slash command and skipped. The `/plan` prefix is now stripped.
 - Cross-project heads-up on Linux/macOS: a Windows-style path in the prompt (`C:\...`) is not rooted

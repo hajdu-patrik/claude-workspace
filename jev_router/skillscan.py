@@ -8,7 +8,7 @@ warn: static analysis also flags legitimate skills that run scripts. `skillscan.
 Static analysis by default (`--no-llm`: nothing leaves the machine); `skillscan.llm: true` lets
 SkillSpector's own provider settings (SKILLSPECTOR_PROVIDER, ...) add its LLM analysis.
 SkillSpector is optional (Python 3.12+, installed as its own tool): without it skills are linked
-unscanned with a warning, and so is a skill whose scan fails.
+unscanned with a warning (also when it does not start), and so is a skill whose scan fails.
 """
 import hashlib
 import json
@@ -34,9 +34,24 @@ def find_scanner():
     return P.find_exe(EXE)
 
 
+UV_TOOL_HINT = ("SkillSpector's uv tool folder is probably not visible to this Python (a packaged Python on "
+                "Windows virtualizes %APPDATA%). Reinstall it outside AppData: set UV_TOOL_DIR to e.g. "
+                r"%USERPROFILE%\.local\share\uv\tools and run "
+                "`uv tool install --force git+https://github.com/NVIDIA/skillspector.git` "
+                "(`uv tool upgrade` then needs the same UV_TOOL_DIR).")
+
+
+class StartError(str):
+    """scanner_version() result when the scanner does not start: the first line of its output."""
+
+
 def scanner_version(exe):
+    """The version; "unknown" when it starts but prints nothing usable; a StartError when it does not start."""
     code, out = P.run([exe, "--version"], timeout=30)
-    return out.split()[-1] if code == 0 and out else "unknown"
+    out = (out or "").strip()
+    if code != 0:
+        return StartError(out.splitlines()[0][:200] if out else f"exit {code}")
+    return out.split()[-1] if out else "unknown"
 
 
 def fingerprint(skill_dir):
@@ -148,7 +163,13 @@ def gate(skills, act, apply, llm=False, allow=(), confirm=lambda question: None)
     if not exe:
         print(f"[WARN] skillscan: SkillSpector not found - {len(skills)} skill(s) linked unscanned. Install: {INSTALL_HINT}")
         return set()
-    version, cache, blocked = scanner_version(exe), load_cache(), set()
+    version = scanner_version(exe)
+    if isinstance(version, StartError):
+        hint = f" {UV_TOOL_HINT}" if "trampoline" in version.lower() else ""
+        print(f"[WARN] skillscan: SkillSpector does not start ({version}) - {len(skills)} skill(s) linked "
+              f"unscanned.{hint}")
+        return set()
+    cache, blocked = load_cache(), set()
     print(f"skillscan: SkillSpector {version}, {'static + LLM' if llm else 'static'} analysis of {len(skills)} skill(s)")
     for s in skills:
         r = verdict(s, exe, version, llm, cache)
