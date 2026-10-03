@@ -21,6 +21,8 @@ Options: --providers=claude,codex,antigravity  --jev-token=<TypeSafe token or Op
          --openrouter-key=<key>  --remote[=<name>]  --no-migrate
          --allow-skill=<name,...>  never ask about these skills; restore them from quarantine (remembered)
          --scan-llm=on|off         add SkillSpector's LLM analysis to the static scan (remembered)
+         --accept-flagged          keep every skill now rated DO_NOT_INSTALL without asking (bound to its
+                                   current content: asked again when it changes)
 
 Steps of the interactive setup:
   1. detect Claude Code, Codex and Antigravity (installed? logged in?) and help you log in
@@ -206,7 +208,8 @@ def scan_settings(cfg, persist):
     if persist and sc != (cfg.get("skillscan") or {}):
         cfg["skillscan"] = sc
         save_config(cfg)
-    hub.SCAN = {"llm": bool(sc.get("llm")), "allow": tuple(sc.get("allow") or ())}
+    hub.SCAN = {"llm": bool(sc.get("llm")), "allow": tuple(sc.get("allow") or ()),
+                "accept_flagged": "--accept-flagged" in FLAGS}  # one-off, never saved
     hub.CONFIRM = lambda question: ask(question, "n") if interactive() and not YES else None
 
 

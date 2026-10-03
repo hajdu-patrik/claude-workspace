@@ -64,7 +64,7 @@ Preview without changing anything: `python install.py --dry-run`.
 | `python install.py models --probe` | test which models your accounts may use (stored per user) |
 | `python install.py remote --name "My PC" [--workdir <folder>]` | remote access from other devices ([guide](docs/remote-access.md)) |
 | `python install.py uninstall` | remove hooks, MCP entries and remote access (skills stay) |
-| `python install.py skills [--apply] [--allow-skill=<name>] [--scan-llm=on\|off]` | scan + re-link skills, regenerate workers, rebuild the catalog |
+| `python install.py skills [--apply] [--allow-skill=<name>] [--scan-llm=on\|off] [--accept-flagged]` | scan + re-link skills, regenerate workers, rebuild the catalog |
 | `python install.py doctor` | health report |
 | `python install.py route [--provider claude] [--json] <text>` | routing decision for one prompt or sub-task, side-effect free ([details](#routing-decision-on-demand)) |
 
@@ -188,6 +188,10 @@ and its LLM meta-analysis did not change those verdicts.
 
 * **Override:** `--allow-skill=<name>[,<name>]` never asks about these skills and restores them from
   quarantine; the list is remembered in `config.json` (`skillscan.allow`).
+* **Keep all after a review:** `skills --apply --accept-flagged` keeps every skill now rated
+  `DO_NOT_INSTALL` without asking, like answering "no" to each – bound to its current content, so a
+  changed skill is asked about again. A skill's source cannot be verified (its frontmatter can claim
+  any author), so there is no allow-by-publisher list.
 * **Static by default:** the scan runs with `--no-llm`, so no skill content leaves the machine.
   `--scan-llm=on` (remembered as `skillscan.llm`) adds SkillSpector's LLM analysis, configured through
   its own variables (`SKILLSPECTOR_PROVIDER`, e.g. `claude_cli`, and that provider's key). Without a

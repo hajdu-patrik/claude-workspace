@@ -143,6 +143,22 @@ def test_a_cached_run_scans_nothing(tmp_path, scans, capsys):
     assert len(scans) == 2 and "new or changed" not in capsys.readouterr().out
 
 
+def test_accept_flagged_keeps_flagged_skills_until_they_change(tmp_path, scans, capsys):
+    hub_dir, asked = tmp_path / ".skills", []
+    skills = make_skills(hub_dir, "evil", "fine")
+    assert skillscan.gate(skills, apply_act, apply=True, confirm=yes, accept_flagged=True) == set()
+    assert (hub_dir / "evil").is_dir() and "accepted with --accept-flagged (asked again only if it changes): evil (100)" in capsys.readouterr().out
+    assert skillscan.gate(skills, apply_act, apply=True, confirm=lambda q: asked.append(q)) == set() and not asked
+    (hub_dir / "evil" / "run.py").write_text("print(3)\n", encoding="utf-8")
+    assert skillscan.gate(skills, apply_act, apply=True, confirm=yes) == {"evil"}
+
+
+def test_accept_flagged_in_a_dry_run_remembers_nothing(tmp_path, scans):
+    skills = make_skills(tmp_path / ".skills", "evil")
+    skillscan.gate(skills, lambda msg, fn=None: None, apply=False, accept_flagged=True)
+    assert not skillscan.CACHE.exists()
+
+
 def test_llm_mode_without_provider_falls_back_to_static_uncached(tmp_path, scans, monkeypatch, capsys):
     modes = []
     monkeypatch.setattr(skillscan, "run_scan", lambda exe, d, llm: modes.append(llm) or dict(REPORTS["fine"], llm_available=False))
@@ -189,7 +205,8 @@ def test_scan_flags_are_remembered_only_when_applied(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "FLAGS", {"--allow-skill": "b, a", "--scan-llm": "on"})
     monkeypatch.setattr(hub, "CONFIRM", hub.CONFIRM)
     cli.scan_settings({"skillscan": {"allow": ["c"]}}, persist=False)
-    assert hub.SCAN == {"llm": True, "allow": ("a", "b", "c")} and not (tmp_path / "config.json").exists()
+    assert hub.SCAN == {"llm": True, "allow": ("a", "b", "c"), "accept_flagged": False}
+    assert not (tmp_path / "config.json").exists()
     cli.scan_settings({}, persist=True)
     assert json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))["skillscan"] == {"allow": ["a", "b"], "llm": True}
     monkeypatch.setattr(hub, "SCAN", {"llm": False, "allow": ()})

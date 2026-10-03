@@ -18,7 +18,9 @@ dates are ISO 8601.
   scan. Both are remembered in `config.json` (`skillscan`). Verdicts, failed scans included, are
   cached per content hash, scanner version and mode; new or changed skills are scanned in parallel (up
   to 8 at a time: a first scan of 12 skills took 21 s instead of 78 s), and each outcome is reported in
-  one summary line instead of a line per skill. SkillSpector is optional (Python 3.12+,
+  one summary line instead of a line per skill. After a review, `--accept-flagged` keeps every skill
+  now rated `DO_NOT_INSTALL` without asking, bound to its current content (a skill's publisher cannot
+  be verified, so there is no allow-by-source list). SkillSpector is optional (Python 3.12+,
   `uv tool install`): without it skills are linked unscanned with a warning.
 - JEV through OpenRouter: an OpenRouter key (`--jev-token=sk-or-...` or `--openrouter-key=...`, or
   `JEV_OPENROUTER_API_KEY`) reaches JEV's System One API on OpenRouter (model `jev-1.13`). A TypeSafe
@@ -40,6 +42,9 @@ dates are ISO 8601.
   any local `ROUTER_*` setting first, so its numbers always match CI.
 
 ### Changed
+- JEV's destructive question leaves out drafts, planning and purchase advice ("write an email to my
+  colleague", "which domain should I buy?"): JEV's false positives on the eval sets fell from 4 / 4 / 5 %
+  to 1 / 2 / 2 % (Hungarian / English / real traffic), recall unchanged at 100 %.
 - Pasted blocks (`<pasted_content>`) no longer decide the answer language or the task type; JEV
   still gets them as context and the safety regex still scans them. Subagent hand-backs
   (`<agent-message>`) are no longer routed.

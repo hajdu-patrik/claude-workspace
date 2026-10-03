@@ -165,10 +165,14 @@ def restore_allowed(hub, allow, act):
             act(f"skillscan: restore allowed skill {src} -> {hub / name}", lambda s=src: shutil.move(str(s), str(hub / name)))
 
 
-def _decide(s, r, act, confirm, cache):
-    """A DO_NOT_INSTALL skill: "kept earlier", "unasked" (confirm() is None: nobody to ask), "kept" or "quarantined"."""
+def _decide(s, r, act, confirm, cache, accept_flagged=False):
+    """A DO_NOT_INSTALL skill: "kept earlier", "accepted", "unasked" (confirm() is None: nobody to ask), "kept"
+    or "quarantined". --accept-flagged keeps it like a "no" answer: bound to this content, not to the name."""
     if r.get("accepted"):
         return "kept earlier"
+    if accept_flagged:
+        cache.get(s.name, {})["accepted"] = True
+        return "accepted"
     head = f"skillscan: {s.name}: {BLOCK} (risk {r.get('score')}, max {r.get('max_severity')})"
     answer = confirm(f"  {head}. Review: {EXE} scan \"{s}\"\n  Move it to quarantine (linked nowhere)?")
     if answer is None:
@@ -183,15 +187,17 @@ def _decide(s, r, act, confirm, cache):
 
 
 # one summary line per outcome instead of a line per skill: a large hub has dozens of CAUTION verdicts
-_SUMMARY = (("unasked", f"{BLOCK}, linked - decide in an interactive `python install.py skills --apply`"),
+_SUMMARY = (("unasked", f"{BLOCK}, linked - decide in an interactive `python install.py skills --apply`, "
+                        "or keep all of them after a review with --accept-flagged"),
             ("kept", f"{BLOCK}, linked - kept by you (asked again only if it changes)"),
+            ("accepted", f"{BLOCK}, linked - accepted with --accept-flagged (asked again only if it changes)"),
             ("kept earlier", f"{BLOCK}, linked - kept by you earlier"),
             ("allowed", f"{BLOCK}, linked - allowed in config"),
             (CAUTION, f"{CAUTION}, linked"),
             ("failed", "scan failed, linked unscanned until they change"))
 
 
-def gate(skills, act, apply, llm=False, allow=(), confirm=lambda question: None):
+def gate(skills, act, apply, llm=False, allow=(), confirm=lambda question: None, accept_flagged=False):
     """Scan the given hub skills; returns the names that must not be linked."""
     allow = set(allow)
     if not skills:
@@ -215,7 +221,7 @@ def gate(skills, act, apply, llm=False, allow=(), confirm=lambda question: None)
         if "error" in r:
             outcome, label = "failed", f"{s.name} ({r['error']})"
         elif rec == BLOCK:
-            outcome = "allowed" if s.name in allow else _decide(s, r, act, confirm, cache)
+            outcome = "allowed" if s.name in allow else _decide(s, r, act, confirm, cache, accept_flagged)
             label = f"{s.name} ({score})"
         elif rec == CAUTION:
             outcome, label = CAUTION, f"{s.name} ({score})"

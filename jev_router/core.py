@@ -393,7 +393,9 @@ def build_questions(skills, effort=None, models=None):
                          "instructions": "The request involves reading a long document, many files, or a whole codebase"},
         "needs_web": {"type": "noul", "instructions": "Answering requires up-to-date information from the internet"},
         "destructive": {"type": "noul",
-                        "instructions": "The request asks to delete data, send a message to someone, publish something, or spend money"},
+                        "instructions": "The request asks to delete data, send a message to someone, publish "
+                                        "something, or spend money. Writing a draft for the user (a letter, an "
+                                        "email), planning, or advising what to buy does not count"},
         "agents": {"type": "choice",
                    "instructions": "How many EXTRA agents should work in parallel next to the main one? Be very strict: "
                                    "every extra agent multiplies token usage. When in doubt, choose the lower number.",

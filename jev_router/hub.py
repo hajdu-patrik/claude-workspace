@@ -179,7 +179,8 @@ def _scan_hub_skills():
     bundled = target_of(REPO_SKILLS)
     third_party = [s for s in hub_skills() if bundled is None or bundled not in (target_of(s) or s).parents]
     return skillscan.gate(third_party, act, APPLY, llm=SCAN.get("llm", False), allow=SCAN.get("allow", ()),
-                          confirm=CONFIRM if APPLY else lambda question: None)
+                          confirm=CONFIRM if APPLY else lambda question: None,
+                          accept_flagged=SCAN.get("accept_flagged", False))
 
 
 def _link_hub_skills(blocked=frozenset()):
